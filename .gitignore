@@ -1,0 +1,83 @@
+# Weasel: keep source, the solution, and vendored headers/libraries eligible
+# for version control. Ignore only generated build products,
+# local editor state, and per-user runtime data.
+
+# Visual Studio / editor state
+/.vs/
+/visualstudio/.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+*.VC.opendb
+*.vsidx
+*.ipch
+*.ipdb
+*.iobj
+*.idb
+*.tlog
+*.lastbuildstate
+
+# Compiler and linker intermediates
+*.d
+*.o
+*.obj
+*.lo
+*.slo
+*.pch
+*.gch
+*.ilk
+*.pdb
+*.exp
+*.manifest
+
+# Common generated build directories. Do not ignore the repository Makefile.
+/build/
+/Build/
+/build-*/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/Testing/
+/visualstudio/Weasel/
+
+# Application build outputs and copied runtime dependencies
+/bin/Weasel
+/bin/Weasel_d
+/bin/Weasel*.exe
+/bin/Weasel*.ilk
+/bin/Weasel*.pdb
+/bin/Weasel*.lib
+/bin/Weasel*.exp
+/bin/Weasel*.manifest
+/bin/buildcheck/
+/bin/sfml-*.dll
+/bin/opencv_world*.dll
+/Release/
+
+# Local runtime data
+/bin/exports/
+/bin/ffmpeg/*.exe
+/bin/projects/
+/bin/presets/
+/bin/cache/
+/bin/imgui.ini
+/bin/settings.json
+
+# OS and temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.log
+*.bak
+*.swp
+*~
+/bin/buildcheck
+bin/recent_projects.json
+bin/recent_projects.json

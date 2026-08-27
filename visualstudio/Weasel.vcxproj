@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\src\main.cpp" />
+    <ClCompile Include="..\src\AudioGraphBuilder.cpp" />
+    <ClCompile Include="..\src\AudioWaveformCache.cpp" />
+    <ClCompile Include="..\src\ClipInspector.cpp" />
+    <ClCompile Include="..\src\ClipPresetLibrary.cpp" />
+    <ClCompile Include="..\src\EditorState.cpp" />
+    <ClCompile Include="..\src\ExportController.cpp" />
+    <ClCompile Include="..\src\VideoRenderer.cpp" />
+    <ClCompile Include="..\src\FfmpegProcess.cpp" />
+    <ClCompile Include="..\src\MediaDecoder.cpp" />
+    <ClCompile Include="..\src\MediaImportController.cpp" />
+    <ClCompile Include="..\src\MediaThumbnailController.cpp" />
+    <ClCompile Include="..\src\MediaTools.cpp" />
+    <ClCompile Include="..\src\MediaProbe.cpp" />
+    <ClCompile Include="..\src\PreviewController.cpp" />
+    <ClCompile Include="..\src\PreviewFrameCache.cpp" />
+    <ClCompile Include="..\src\ProcessRunner.cpp" />
+    <ClCompile Include="..\src\RecentProjects.cpp" />
+    <ClCompile Include="..\src\EditHistory.cpp" />
+    <ClCompile Include="..\src\ProjectData.cpp" />
+    <ClCompile Include="..\src\ProcessUtils.cpp" />
+    <ClCompile Include="..\src\SequenceAudioController.cpp" />
+    <ClCompile Include="..\src\SequenceAudioRenderer.cpp" />
+    <ClCompile Include="..\src\SequenceRenderPlan.cpp" />
+    <ClCompile Include="..\src\SequenceInspector.cpp" />
+    <ClCompile Include="..\src\TimelineController.cpp" />
+    <ClCompile Include="..\src\TimelineView.cpp" />
+    <ClCompile Include="..\src\WaveformAlignment.cpp" />
+    <ClCompile Include="..\src\Editor.cpp" />
+    <ClCompile Include="..\src\VideoCompositor.cpp" />
+    <ClCompile Include="..\src\VideoExporter.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\AudioGraphBuilder.h" />
+    <ClInclude Include="..\src\EditorState.h" />
+    <ClInclude Include="..\src\ExportController.h" />
+    <ClInclude Include="..\src\MediaImportController.h" />
+    <ClInclude Include="..\src\MediaThumbnailController.h" />
+    <ClInclude Include="..\src\AudioWaveformCache.h" />
+    <ClInclude Include="..\src\ClipPresetLibrary.h" />
+    <ClInclude Include="..\src\ClipInspector.h" />
+    <ClInclude Include="..\src\ClipSettings.hpp" />
+    <ClInclude Include="..\src\ClipSettingsJson.hpp" />
+    <ClInclude Include="..\src\ExportSettings.h" />
+    <ClInclude Include="..\src\VideoRenderer.h" />
+    <ClInclude Include="..\src\FfmpegProcess.h" />
+    <ClInclude Include="..\src\MediaDecoder.h" />
+    <ClInclude Include="..\src\MediaProbe.h" />
+    <ClInclude Include="..\src\MediaTools.h" />
+    <ClInclude Include="..\src\PreviewController.h" />
+    <ClInclude Include="..\src\PreviewFrameCache.h" />
+    <ClInclude Include="..\src\ProcessRunner.h" />
+    <ClInclude Include="..\src\RecentProjects.h" />
+    <ClInclude Include="..\src\ProjectFile.hpp" />
+    <ClInclude Include="..\src\EditHistory.h" />
+    <ClInclude Include="..\src\ProjectData.h" />
+    <ClInclude Include="..\src\ProcessUtils.h" />
+    <ClInclude Include="..\src\Sequence.hpp" />
+    <ClInclude Include="..\src\SequenceAudioController.h" />
+    <ClInclude Include="..\src\SequenceAudioRenderer.h" />
+    <ClInclude Include="..\src\SequenceInspector.h" />
+    <ClInclude Include="..\src\SequenceRenderPlan.h" />
+    <ClInclude Include="..\src\TimelineController.h" />
+    <ClInclude Include="..\src\TimelineView.h" />
+    <ClInclude Include="..\src\Themes.hpp" />
+    <ClInclude Include="..\src\WaveformAlignment.h" />
+    <ClInclude Include="..\src\Editor.h" />
+    <ClInclude Include="..\src\VideoCompositor.h" />
+    <ClInclude Include="..\src\VideoExporter.h" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E7B57627-57B8-42A7-B843-19AA1BCCD079}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>Weasel</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>Weasel</ProjectName>
+    <VcpkgEnabled>true</VcpkgEnabled>
+    <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
+    <VcpkgUseStatic>true</VcpkgUseStatic>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>..\bin\</OutDir>
+    <TargetName>Weasel_d</TargetName>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>..\bin\</OutDir>
+    <TargetName>Weasel</TargetName>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

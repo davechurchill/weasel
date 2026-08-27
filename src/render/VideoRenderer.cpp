@@ -242,6 +242,9 @@ namespace weasel
         arguments.push_back(L"[exportAudio]");
         arguments.push_back(L"-t");
         arguments.push_back(WideFromUtf8(Number(duration)));
+        // When the raw-video pipe closes early, finish the output when that
+        // video stream ends instead of continuing with the full audio bed.
+        arguments.push_back(L"-shortest");
         arguments.insert(arguments.end(), request.outputEncodingArguments.begin(),
                          request.outputEncodingArguments.end());
         arguments.push_back(WidePathArgument(request.stagingPath));
@@ -286,6 +289,13 @@ namespace weasel
         {
             if (request.cancelRequested.load(std::memory_order_acquire))
             {
+                break;
+            }
+            // Always emit at least one frame. This lets a finish request made
+            // immediately after startup still produce a valid video stream.
+            if (frameIndex > 0 && request.finishRequested.load(std::memory_order_acquire))
+            {
+                result.finishedEarly = true;
                 break;
             }
 
@@ -378,6 +388,8 @@ namespace weasel
                 callbacks.onProgress(std::min(duration,
                     static_cast<double>(frameIndex + 1) / frameRate));
             }
+            result.renderedDuration = std::min(duration,
+                static_cast<double>(frameIndex + 1) / frameRate);
             const auto now = std::chrono::steady_clock::now();
             if (callbacks.onPreviewFrame && now >= nextPreviewFrameAt)
             {

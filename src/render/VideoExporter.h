@@ -47,6 +47,7 @@ namespace weasel
         std::uint64_t          outputFileSizeBytes = 0;
         std::uint64_t          projectedFileSizeBytes = 0;
         double                 elapsedSeconds = 0.0;
+        bool                   finishRequested = false;
     };
 
     class VideoExporter
@@ -59,6 +60,7 @@ namespace weasel
         std::string         m_ffmpegCommand;
         std::thread         m_worker;
         std::atomic_bool    m_cancelRequested = false;
+        std::atomic_bool    m_finishRequested = false;
         std::atomic_bool    m_previewEnabled = false;
         std::optional<ExportPreviewFrame> m_pendingPreviewFrame;
         std::optional<std::chrono::steady_clock::time_point> m_exportStartedAt;
@@ -92,6 +94,9 @@ namespace weasel
         // Requests that the active FFmpeg process stop. The export is staged,
         // so a cancelled job never publishes a partial output file.
         void cancel();
+
+        // Completes the current frame and publishes a valid partial export.
+        void finishNow();
 
         void setPreviewEnabled(bool enabled);
         bool previewEnabled() const noexcept;

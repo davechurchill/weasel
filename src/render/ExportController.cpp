@@ -272,6 +272,13 @@ namespace weasel
                 m_exporter.cancel();
             }
             ImGui::EndDisabled();
+
+            ImGui::BeginDisabled(exportStatus.cancelRequested || exportStatus.finishRequested);
+            if (ImGui::Button("Finish Export Now", ImVec2(-1.0f, 0.0f)))
+            {
+                m_exporter.finishNow();
+            }
+            ImGui::EndDisabled();
         }
 
         if (ImGui::CollapsingHeader("FFmpeg details", ImGuiTreeNodeFlags_DefaultOpen))

@@ -453,6 +453,7 @@ namespace weasel
             }
         }
         m_cancelRequested.store(false, std::memory_order_release);
+        m_finishRequested.store(false, std::memory_order_release);
         std::uint64_t generation = 0;
         {
             std::lock_guard lock(m_mutex);
@@ -525,6 +526,18 @@ namespace weasel
         // child. Avoid signalling a stored PID here: a cancellation racing a
         // completed waitpid() could otherwise target a reused POSIX PID.
 #endif
+    }
+
+    void VideoExporter::finishNow()
+    {
+        m_finishRequested.store(true, std::memory_order_release);
+        std::lock_guard lock(m_mutex);
+        if (m_status.state != ExportState::Running || m_status.cancelRequested)
+        {
+            return;
+        }
+        m_status.finishRequested = true;
+        m_status.message = "Finishing export at the current frame...";
     }
 
     void VideoExporter::setPreviewEnabled(bool enabled)
@@ -737,7 +750,10 @@ namespace weasel
             if (m_status.state == ExportState::Running)
             {
                 m_ffmpegCommand = FormatMediaCommand(ffmpegPath, arguments);
-                m_status.message = "Rendering with the GPU compositor...";
+                if (!m_status.finishRequested)
+                {
+                    m_status.message = "Rendering with the GPU compositor...";
+                }
                 m_status.log = std::string("GPU compositor\nEncoder: ")
                     + videoEncoder.displayName + "\nLive FFmpeg output:\n";
             }
@@ -751,6 +767,7 @@ namespace weasel
             outputEncodingArguments,
             generation,
             m_cancelRequested,
+            m_finishRequested,
             m_processMutex,
             m_activeProcess
         };
@@ -818,6 +835,10 @@ namespace weasel
             };
             return;
         }
+        const double completedDuration = rendererResult.renderedDuration > 0.0
+            ? rendererResult.renderedDuration
+            : exportDuration;
+        const bool partialExport = rendererResult.finishedEarly;
         bool cancelledBeforePublish = false;
         std::string commitError;
         {
@@ -834,11 +855,12 @@ namespace weasel
                 m_status = {
                     ExportState::Succeeded,
                     outputPath,
-                    "Export complete: " + outputPath.filename().string(),
+                    (partialExport ? "Partial export complete: " : "Export complete: ")
+                        + outputPath.filename().string(),
                     TailText(result.log),
                     1.0,
-                    exportDuration,
-                    exportDuration,
+                    completedDuration,
+                    completedDuration,
                     false
                 };
                 std::error_code outputSizeError;

@@ -36,6 +36,9 @@ namespace weasel
             const std::vector<std::wstring>&    outputEncodingArguments;
             std::uint64_t                       generation = 0;
             std::atomic_bool&                   cancelRequested;
+            // Unlike cancellation, this asks the renderer to finish the
+            // frame in progress then close FFmpeg's input cleanly.
+            std::atomic_bool&                   finishRequested;
             std::mutex&                        processMutex;
             void*&                             activeProcess;
         };
@@ -52,6 +55,8 @@ namespace weasel
         {
             FfmpegProcessResult ffmpeg;
             std::string         rendererError;
+            double              renderedDuration = 0.0;
+            bool                finishedEarly = false;
         };
 
         Result run(const Request& request, const Callbacks& callbacks = {});

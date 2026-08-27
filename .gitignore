@@ -62,3 +62,6 @@ Desktop.ini
 *.bak
 *.swp
 *~
+
+# AI bullshit
+AGENTS.md

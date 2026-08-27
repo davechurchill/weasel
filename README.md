@@ -4,9 +4,26 @@
 
 Weasel is a desktop video editor written in C++20 that optimizes for speed and ease of use. It provides a multitrack video and audio timeline, preview, clip effects, and FFmpeg-backed export.
 
+## Project folders
+
+A Weasel project is stored as a folder. Saving a new project creates this basic layout:
+
+```text
+my-project/
+├── project.json
+├── cache/
+└── exports/
+```
+
+- `project.json` stores the timeline, edit settings, export settings, and paths to imported assets.
+- `cache/` contains generated waveform and sequence-preview audio. It can be deleted while Weasel is closed and will be rebuilt as needed.
+- `exports/` is the default destination for rendered videos. **Export As** can save a video somewhere else.
+
+Imported video, audio, image, and LUT files are referenced from their existing locations; Weasel does not copy them into the project folder. Moving or renaming a referenced file after importing it can make it unavailable to the project.
+
 ## Building
 
-Run the commands below from the repository root. Release builds are written to `bin/Weasel.exe` on Windows and `bin/Weasel` on Linux and macOS. 
+Run the commands below from the repository root. Release builds are written to `bin/Weasel.exe` on Windows and `bin/Weasel` on Linux and macOS.
 
 ### Windows
 

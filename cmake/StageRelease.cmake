@@ -12,8 +12,8 @@ endif()
 
 set(required_files
     "${WEASEL_EXECUTABLE}"
-    "${WEASEL_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
-    "${WEASEL_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
+    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
+    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
 )
 
 foreach(required_file IN LISTS required_files)
@@ -23,20 +23,20 @@ foreach(required_file IN LISTS required_files)
 endforeach()
 
 # Release is a generated staging directory, so rebuild it cleanly each time.
-file(REMOVE_RECURSE "${WEASEL_RELEASE_DIR}")
-file(MAKE_DIRECTORY "${WEASEL_RELEASE_DIR}/ffmpeg")
+file(REMOVE_RECURSE "${WEASEL_DIST_DIR}")
+file(MAKE_DIRECTORY "${WEASEL_DIST_DIR}/ffmpeg")
 get_filename_component(weasel_executable_name "${WEASEL_EXECUTABLE}" NAME)
-file(COPY_FILE "${WEASEL_EXECUTABLE}" "${WEASEL_RELEASE_DIR}/${weasel_executable_name}")
-file(COPY_FILE "${WEASEL_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
-    "${WEASEL_RELEASE_DIR}/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}")
-file(COPY_FILE "${WEASEL_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
-    "${WEASEL_RELEASE_DIR}/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}")
+file(COPY_FILE "${WEASEL_EXECUTABLE}" "${WEASEL_DIST_DIR}/${weasel_executable_name}")
+file(COPY_FILE "${WEASEL_PACKAGED_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
+    "${WEASEL_DIST_DIR}/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}")
+file(COPY_FILE "${WEASEL_PACKAGED_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
+    "${WEASEL_DIST_DIR}/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}")
 
 if(NOT WIN32)
     file(CHMOD
-        "${WEASEL_RELEASE_DIR}/${weasel_executable_name}"
-        "${WEASEL_RELEASE_DIR}/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
-        "${WEASEL_RELEASE_DIR}/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
+        "${WEASEL_DIST_DIR}/${weasel_executable_name}"
+        "${WEASEL_DIST_DIR}/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
+        "${WEASEL_DIST_DIR}/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
         PERMISSIONS
             OWNER_READ OWNER_WRITE OWNER_EXECUTE
             GROUP_READ GROUP_EXECUTE

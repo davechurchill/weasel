@@ -11,75 +11,75 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\main.cpp" />
-    <ClCompile Include="..\src\AudioGraphBuilder.cpp" />
-    <ClCompile Include="..\src\AudioWaveformCache.cpp" />
-    <ClCompile Include="..\src\ClipInspector.cpp" />
-    <ClCompile Include="..\src\ClipPresetLibrary.cpp" />
-    <ClCompile Include="..\src\EditorState.cpp" />
-    <ClCompile Include="..\src\ExportController.cpp" />
-    <ClCompile Include="..\src\VideoRenderer.cpp" />
-    <ClCompile Include="..\src\FfmpegProcess.cpp" />
-    <ClCompile Include="..\src\MediaDecoder.cpp" />
-    <ClCompile Include="..\src\MediaImportController.cpp" />
-    <ClCompile Include="..\src\MediaThumbnailController.cpp" />
-    <ClCompile Include="..\src\MediaTools.cpp" />
-    <ClCompile Include="..\src\MediaProbe.cpp" />
-    <ClCompile Include="..\src\PreviewController.cpp" />
-    <ClCompile Include="..\src\PreviewFrameCache.cpp" />
-    <ClCompile Include="..\src\ProcessRunner.cpp" />
-    <ClCompile Include="..\src\RecentProjects.cpp" />
-    <ClCompile Include="..\src\EditHistory.cpp" />
-    <ClCompile Include="..\src\ProjectData.cpp" />
-    <ClCompile Include="..\src\ProcessUtils.cpp" />
-    <ClCompile Include="..\src\SequenceAudioController.cpp" />
-    <ClCompile Include="..\src\SequenceAudioRenderer.cpp" />
-    <ClCompile Include="..\src\SequenceRenderPlan.cpp" />
-    <ClCompile Include="..\src\SequenceInspector.cpp" />
-    <ClCompile Include="..\src\TimelineController.cpp" />
-    <ClCompile Include="..\src\TimelineView.cpp" />
-    <ClCompile Include="..\src\WaveformAlignment.cpp" />
-    <ClCompile Include="..\src\Editor.cpp" />
-    <ClCompile Include="..\src\VideoCompositor.cpp" />
-    <ClCompile Include="..\src\VideoExporter.cpp" />
+    <ClCompile Include="..\src\app\main.cpp" />
+    <ClCompile Include="..\src\render\AudioGraphBuilder.cpp" />
+    <ClCompile Include="..\src\media\AudioWaveformCache.cpp" />
+    <ClCompile Include="..\src\ui\ClipInspector.cpp" />
+    <ClCompile Include="..\src\project\ClipPresetLibrary.cpp" />
+    <ClCompile Include="..\src\app\EditorState.cpp" />
+    <ClCompile Include="..\src\render\ExportController.cpp" />
+    <ClCompile Include="..\src\render\VideoRenderer.cpp" />
+    <ClCompile Include="..\src\media\FfmpegProcess.cpp" />
+    <ClCompile Include="..\src\media\MediaDecoder.cpp" />
+    <ClCompile Include="..\src\media\MediaImportController.cpp" />
+    <ClCompile Include="..\src\media\MediaThumbnailController.cpp" />
+    <ClCompile Include="..\src\media\MediaTools.cpp" />
+    <ClCompile Include="..\src\media\MediaProbe.cpp" />
+    <ClCompile Include="..\src\render\PreviewController.cpp" />
+    <ClCompile Include="..\src\media\PreviewFrameCache.cpp" />
+    <ClCompile Include="..\src\platform\ProcessRunner.cpp" />
+    <ClCompile Include="..\src\app\RecentProjects.cpp" />
+    <ClCompile Include="..\src\project\EditHistory.cpp" />
+    <ClCompile Include="..\src\project\ProjectData.cpp" />
+    <ClCompile Include="..\src\platform\ProcessUtils.cpp" />
+    <ClCompile Include="..\src\render\SequenceAudioController.cpp" />
+    <ClCompile Include="..\src\render\SequenceAudioRenderer.cpp" />
+    <ClCompile Include="..\src\render\SequenceRenderPlan.cpp" />
+    <ClCompile Include="..\src\ui\SequenceInspector.cpp" />
+    <ClCompile Include="..\src\timeline\TimelineController.cpp" />
+    <ClCompile Include="..\src\ui\TimelineView.cpp" />
+    <ClCompile Include="..\src\timeline\WaveformAlignment.cpp" />
+    <ClCompile Include="..\src\app\Editor.cpp" />
+    <ClCompile Include="..\src\render\VideoCompositor.cpp" />
+    <ClCompile Include="..\src\render\VideoExporter.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\AudioGraphBuilder.h" />
-    <ClInclude Include="..\src\EditorState.h" />
-    <ClInclude Include="..\src\ExportController.h" />
-    <ClInclude Include="..\src\MediaImportController.h" />
-    <ClInclude Include="..\src\MediaThumbnailController.h" />
-    <ClInclude Include="..\src\AudioWaveformCache.h" />
-    <ClInclude Include="..\src\ClipPresetLibrary.h" />
-    <ClInclude Include="..\src\ClipInspector.h" />
-    <ClInclude Include="..\src\ClipSettings.hpp" />
-    <ClInclude Include="..\src\ClipSettingsJson.hpp" />
-    <ClInclude Include="..\src\ExportSettings.h" />
-    <ClInclude Include="..\src\VideoRenderer.h" />
-    <ClInclude Include="..\src\FfmpegProcess.h" />
-    <ClInclude Include="..\src\MediaDecoder.h" />
-    <ClInclude Include="..\src\MediaProbe.h" />
-    <ClInclude Include="..\src\MediaTools.h" />
-    <ClInclude Include="..\src\PreviewController.h" />
-    <ClInclude Include="..\src\PreviewFrameCache.h" />
-    <ClInclude Include="..\src\ProcessRunner.h" />
-    <ClInclude Include="..\src\RecentProjects.h" />
-    <ClInclude Include="..\src\ProjectFile.hpp" />
-    <ClInclude Include="..\src\EditHistory.h" />
-    <ClInclude Include="..\src\ProjectData.h" />
-    <ClInclude Include="..\src\ProcessUtils.h" />
-    <ClInclude Include="..\src\Sequence.hpp" />
-    <ClInclude Include="..\src\SequenceAudioController.h" />
-    <ClInclude Include="..\src\SequenceAudioRenderer.h" />
-    <ClInclude Include="..\src\SequenceInspector.h" />
-    <ClInclude Include="..\src\SequenceRenderPlan.h" />
-    <ClInclude Include="..\src\TimelineController.h" />
-    <ClInclude Include="..\src\TimelineView.h" />
-    <ClInclude Include="..\src\Themes.hpp" />
-    <ClInclude Include="..\src\WaveformAlignment.h" />
-    <ClInclude Include="..\src\Editor.h" />
-    <ClInclude Include="..\src\VideoCompositor.h" />
-    <ClInclude Include="..\src\VideoExporter.h" />
+    <ClInclude Include="..\src\render\AudioGraphBuilder.h" />
+    <ClInclude Include="..\src\app\EditorState.h" />
+    <ClInclude Include="..\src\render\ExportController.h" />
+    <ClInclude Include="..\src\media\MediaImportController.h" />
+    <ClInclude Include="..\src\media\MediaThumbnailController.h" />
+    <ClInclude Include="..\src\media\AudioWaveformCache.h" />
+    <ClInclude Include="..\src\project\ClipPresetLibrary.h" />
+    <ClInclude Include="..\src\ui\ClipInspector.h" />
+    <ClInclude Include="..\src\project\ClipSettings.hpp" />
+    <ClInclude Include="..\src\project\ClipSettingsJson.hpp" />
+    <ClInclude Include="..\src\project\ExportSettings.h" />
+    <ClInclude Include="..\src\render\VideoRenderer.h" />
+    <ClInclude Include="..\src\media\FfmpegProcess.h" />
+    <ClInclude Include="..\src\media\MediaDecoder.h" />
+    <ClInclude Include="..\src\media\MediaProbe.h" />
+    <ClInclude Include="..\src\media\MediaTools.h" />
+    <ClInclude Include="..\src\render\PreviewController.h" />
+    <ClInclude Include="..\src\media\PreviewFrameCache.h" />
+    <ClInclude Include="..\src\platform\ProcessRunner.h" />
+    <ClInclude Include="..\src\app\RecentProjects.h" />
+    <ClInclude Include="..\src\project\ProjectFile.hpp" />
+    <ClInclude Include="..\src\project\EditHistory.h" />
+    <ClInclude Include="..\src\project\ProjectData.h" />
+    <ClInclude Include="..\src\platform\ProcessUtils.h" />
+    <ClInclude Include="..\src\timeline\Sequence.hpp" />
+    <ClInclude Include="..\src\render\SequenceAudioController.h" />
+    <ClInclude Include="..\src\render\SequenceAudioRenderer.h" />
+    <ClInclude Include="..\src\ui\SequenceInspector.h" />
+    <ClInclude Include="..\src\render\SequenceRenderPlan.h" />
+    <ClInclude Include="..\src\timeline\TimelineController.h" />
+    <ClInclude Include="..\src\ui\TimelineView.h" />
+    <ClInclude Include="..\src\app\Themes.hpp" />
+    <ClInclude Include="..\src\timeline\WaveformAlignment.h" />
+    <ClInclude Include="..\src\app\Editor.h" />
+    <ClInclude Include="..\src\render\VideoCompositor.h" />
+    <ClInclude Include="..\src\render\VideoExporter.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E7B57627-57B8-42A7-B843-19AA1BCCD079}</ProjectGuid>
@@ -129,7 +129,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -147,7 +147,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -159,6 +159,13 @@
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)ffmpeg" mkdir "$(OutDir)ffmpeg"
+if exist "$(ProjectDir)..\tools\ffmpeg\ffmpeg.exe" copy /Y "$(ProjectDir)..\tools\ffmpeg\ffmpeg.exe" "$(OutDir)ffmpeg\ffmpeg.exe"
+if exist "$(ProjectDir)..\tools\ffmpeg\ffprobe.exe" copy /Y "$(ProjectDir)..\tools\ffmpeg\ffprobe.exe" "$(OutDir)ffmpeg\ffprobe.exe"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

@@ -48,37 +48,37 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
 
 add_executable(Weasel
-    src/main.cpp
-    src/AudioWaveformCache.cpp
-    src/AudioGraphBuilder.cpp
-    src/ClipInspector.cpp
-    src/ClipPresetLibrary.cpp
-    src/EditorState.cpp
-    src/VideoRenderer.cpp
-    src/ExportController.cpp
-    src/FfmpegProcess.cpp
-    src/MediaDecoder.cpp
-    src/MediaImportController.cpp
-    src/MediaThumbnailController.cpp
-    src/MediaTools.cpp
-    src/MediaProbe.cpp
-    src/PreviewController.cpp
-    src/PreviewFrameCache.cpp
-    src/ProcessRunner.cpp
-    src/RecentProjects.cpp
-    src/EditHistory.cpp
-    src/ProcessUtils.cpp
-    src/ProjectData.cpp
-    src/SequenceAudioController.cpp
-    src/SequenceAudioRenderer.cpp
-    src/SequenceRenderPlan.cpp
-    src/SequenceInspector.cpp
-    src/TimelineController.cpp
-    src/TimelineView.cpp
-    src/WaveformAlignment.cpp
-    src/Editor.cpp
-    src/VideoCompositor.cpp
-    src/VideoExporter.cpp
+    src/app/main.cpp
+    src/app/Editor.cpp
+    src/app/EditorState.cpp
+    src/app/RecentProjects.cpp
+    src/media/AudioWaveformCache.cpp
+    src/media/FfmpegProcess.cpp
+    src/media/MediaDecoder.cpp
+    src/media/MediaImportController.cpp
+    src/media/MediaProbe.cpp
+    src/media/MediaThumbnailController.cpp
+    src/media/MediaTools.cpp
+    src/media/PreviewFrameCache.cpp
+    src/platform/ProcessRunner.cpp
+    src/platform/ProcessUtils.cpp
+    src/project/ClipPresetLibrary.cpp
+    src/project/EditHistory.cpp
+    src/project/ProjectData.cpp
+    src/render/AudioGraphBuilder.cpp
+    src/render/ExportController.cpp
+    src/render/PreviewController.cpp
+    src/render/SequenceAudioController.cpp
+    src/render/SequenceAudioRenderer.cpp
+    src/render/SequenceRenderPlan.cpp
+    src/render/VideoCompositor.cpp
+    src/render/VideoExporter.cpp
+    src/render/VideoRenderer.cpp
+    src/timeline/TimelineController.cpp
+    src/timeline/WaveformAlignment.cpp
+    src/ui/ClipInspector.cpp
+    src/ui/SequenceInspector.cpp
+    src/ui/TimelineView.cpp
 )
 
 target_include_directories(Weasel PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -135,9 +135,10 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT Weasel)
 endif()
 
-# Keep the normal executable outputs identical to the Visual Studio project.
+# Keep executable and debugger outputs in the repository's convenient runtime
+# directory while leaving intermediate compiler output in the build tree.
 set(WEASEL_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bin")
-set(WEASEL_FFMPEG_DIR "${WEASEL_BIN_DIR}/ffmpeg" CACHE PATH
+set(WEASEL_PACKAGED_FFMPEG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/ffmpeg" CACHE PATH
     "Directory containing the FFmpeg and FFprobe runtime tools")
 set_target_properties(Weasel PROPERTIES
     OUTPUT_NAME "Weasel"
@@ -185,6 +186,25 @@ if(WIN32)
     set(WEASEL_FFMPEG_TOOL_SUFFIX ".exe")
 endif()
 
+# Keep the local runtime bundle beside the executable without using the source
+# tools directory as a compiler-output directory.
+set(weasel_ffmpeg_executable
+    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}")
+set(weasel_ffprobe_executable
+    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}")
+if(EXISTS "${weasel_ffmpeg_executable}" AND EXISTS "${weasel_ffprobe_executable}")
+    add_custom_command(TARGET Weasel POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:Weasel>/ffmpeg"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${weasel_ffmpeg_executable}"
+            "$<TARGET_FILE_DIR:Weasel>/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${weasel_ffprobe_executable}"
+            "$<TARGET_FILE_DIR:Weasel>/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
+        VERBATIM
+    )
+endif()
+
 set(WEASEL_STAGE_CONFIG "$<CONFIG>")
 if(NOT CMAKE_CONFIGURATION_TYPES)
     set(WEASEL_STAGE_CONFIG "${CMAKE_BUILD_TYPE}")
@@ -195,9 +215,9 @@ if(WEASEL_STAGE_RELEASE_PACKAGE)
         COMMAND "${CMAKE_COMMAND}"
             "-DWEASEL_CONFIG=${WEASEL_STAGE_CONFIG}"
             "-DWEASEL_EXECUTABLE=$<TARGET_FILE:Weasel>"
-            "-DWEASEL_FFMPEG_DIR=${WEASEL_FFMPEG_DIR}"
+            "-DWEASEL_PACKAGED_FFMPEG_DIR=${WEASEL_PACKAGED_FFMPEG_DIR}"
             "-DWEASEL_FFMPEG_TOOL_SUFFIX=${WEASEL_FFMPEG_TOOL_SUFFIX}"
-            "-DWEASEL_RELEASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/Release"
+            "-DWEASEL_DIST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/dist"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRelease.cmake"
         DEPENDS Weasel
         COMMENT "Staging the standalone Release package"

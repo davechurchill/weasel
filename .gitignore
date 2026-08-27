@@ -1,10 +1,8 @@
-# Weasel: keep source, the solution, and vendored headers/libraries eligible
-# for version control. Ignore only generated build products,
-# local editor state, and per-user runtime data.
+# Weasel: keep source and project metadata eligible for version control. Ignore
+# only generated build products, local editor state, and per-user runtime data.
 
 # Visual Studio / editor state
-/.vs/
-/visualstudio/.vs/
+.vs/
 *.suo
 *.user
 *.userosscache
@@ -44,30 +42,17 @@
 /cmake_install.cmake
 /compile_commands.json
 /Testing/
+
+# Manual Visual Studio intermediates and shared runtime output
 /visualstudio/Weasel/
+/bin/
 
-# Application build outputs and copied runtime dependencies
-/bin/Weasel
-/bin/Weasel_d
-/bin/Weasel*.exe
-/bin/Weasel*.ilk
-/bin/Weasel*.pdb
-/bin/Weasel*.lib
-/bin/Weasel*.exp
-/bin/Weasel*.manifest
-/bin/buildcheck/
-/bin/sfml-*.dll
-/bin/opencv_world*.dll
-/Release/
-
-# Local runtime data
-/bin/exports/
-/bin/ffmpeg/*.exe
-/bin/projects/
-/bin/presets/
-/bin/cache/
-/bin/imgui.ini
-/bin/settings.json
+# Bundled tools and generated release packages
+/tools/ffmpeg/*.exe
+/tools/ffmpeg/ffmpeg
+/tools/ffmpeg/ffplay
+/tools/ffmpeg/ffprobe
+/dist/
 
 # OS and temporary files
 .DS_Store
@@ -78,6 +63,3 @@ Desktop.ini
 *.bak
 *.swp
 *~
-/bin/buildcheck
-bin/recent_projects.json
-bin/recent_projects.json

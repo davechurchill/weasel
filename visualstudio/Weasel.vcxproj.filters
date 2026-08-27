@@ -39,207 +39,207 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\main.cpp">
+    <ClCompile Include="..\src\app\main.cpp">
       <Filter>Application</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\Editor.cpp">
+    <ClCompile Include="..\src\app\Editor.cpp">
       <Filter>Application</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ClipInspector.cpp">
+    <ClCompile Include="..\src\ui\ClipInspector.cpp">
       <Filter>UI\Clip Editing</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\EditorState.cpp">
+    <ClCompile Include="..\src\app\EditorState.cpp">
       <Filter>Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ClipPresetLibrary.cpp">
+    <ClCompile Include="..\src\project\ClipPresetLibrary.cpp">
       <Filter>UI\Clip Editing</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\SequenceInspector.cpp">
+    <ClCompile Include="..\src\ui\SequenceInspector.cpp">
       <Filter>UI\Sequence</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\EditHistory.cpp">
+    <ClCompile Include="..\src\project\EditHistory.cpp">
       <Filter>Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ProjectData.cpp">
+    <ClCompile Include="..\src\project\ProjectData.cpp">
       <Filter>Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\TimelineController.cpp">
+    <ClCompile Include="..\src\timeline\TimelineController.cpp">
       <Filter>Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\TimelineView.cpp">
+    <ClCompile Include="..\src\ui\TimelineView.cpp">
       <Filter>Timeline</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\WaveformAlignment.cpp">
+    <ClCompile Include="..\src\timeline\WaveformAlignment.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\MediaImportController.cpp">
+    <ClCompile Include="..\src\media\MediaImportController.cpp">
       <Filter>Media</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\MediaThumbnailController.cpp">
+    <ClCompile Include="..\src\media\MediaThumbnailController.cpp">
       <Filter>Media</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\MediaProbe.cpp">
+    <ClCompile Include="..\src\media\MediaProbe.cpp">
       <Filter>Media</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\MediaDecoder.cpp">
+    <ClCompile Include="..\src\media\MediaDecoder.cpp">
       <Filter>Media</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\PreviewController.cpp">
+    <ClCompile Include="..\src\render\PreviewController.cpp">
       <Filter>Preview</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\PreviewFrameCache.cpp">
+    <ClCompile Include="..\src\media\PreviewFrameCache.cpp">
       <Filter>Preview</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\RecentProjects.cpp">
+    <ClCompile Include="..\src\app\RecentProjects.cpp">
       <Filter>Project</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\AudioWaveformCache.cpp">
+    <ClCompile Include="..\src\media\AudioWaveformCache.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\AudioGraphBuilder.cpp">
+    <ClCompile Include="..\src\render\AudioGraphBuilder.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\SequenceAudioController.cpp">
+    <ClCompile Include="..\src\render\SequenceAudioController.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\SequenceAudioRenderer.cpp">
+    <ClCompile Include="..\src\render\SequenceAudioRenderer.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\SequenceRenderPlan.cpp">
+    <ClCompile Include="..\src\render\SequenceRenderPlan.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ExportController.cpp">
+    <ClCompile Include="..\src\render\ExportController.cpp">
       <Filter>Export</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\VideoRenderer.cpp">
+    <ClCompile Include="..\src\render\VideoRenderer.cpp">
       <Filter>Export</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\VideoExporter.cpp">
+    <ClCompile Include="..\src\render\VideoExporter.cpp">
       <Filter>Export</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\VideoCompositor.cpp">
+    <ClCompile Include="..\src\render\VideoCompositor.cpp">
       <Filter>Rendering</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ProcessUtils.cpp">
+    <ClCompile Include="..\src\platform\ProcessUtils.cpp">
       <Filter>Utilities</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\FfmpegProcess.cpp">
+    <ClCompile Include="..\src\media\FfmpegProcess.cpp">
       <Filter>Utilities</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\ProcessRunner.cpp">
+    <ClCompile Include="..\src\platform\ProcessRunner.cpp">
       <Filter>Utilities</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\MediaTools.cpp">
+    <ClCompile Include="..\src\media\MediaTools.cpp">
       <Filter>Utilities</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\Editor.h">
+    <ClInclude Include="..\src\app\Editor.h">
       <Filter>Application</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Themes.hpp">
+    <ClInclude Include="..\src\app\Themes.hpp">
       <Filter>UI</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ClipInspector.h">
+    <ClInclude Include="..\src\ui\ClipInspector.h">
       <Filter>UI\Clip Editing</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ClipSettings.hpp">
+    <ClInclude Include="..\src\project\ClipSettings.hpp">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ClipSettingsJson.hpp">
+    <ClInclude Include="..\src\project\ClipSettingsJson.hpp">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ClipPresetLibrary.h">
+    <ClInclude Include="..\src\project\ClipPresetLibrary.h">
       <Filter>UI\Clip Editing</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\SequenceInspector.h">
+    <ClInclude Include="..\src\ui\SequenceInspector.h">
       <Filter>UI\Sequence</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\EditorState.h">
+    <ClInclude Include="..\src\app\EditorState.h">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ProjectData.h">
+    <ClInclude Include="..\src\project\ProjectData.h">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ProjectFile.hpp">
+    <ClInclude Include="..\src\project\ProjectFile.hpp">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\EditHistory.h">
+    <ClInclude Include="..\src\project\EditHistory.h">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\Sequence.hpp">
+    <ClInclude Include="..\src\timeline\Sequence.hpp">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\TimelineController.h">
+    <ClInclude Include="..\src\timeline\TimelineController.h">
       <Filter>Timeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\TimelineView.h">
+    <ClInclude Include="..\src\ui\TimelineView.h">
       <Filter>Timeline</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\WaveformAlignment.h">
+    <ClInclude Include="..\src\timeline\WaveformAlignment.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\MediaImportController.h">
+    <ClInclude Include="..\src\media\MediaImportController.h">
       <Filter>Media</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\MediaThumbnailController.h">
+    <ClInclude Include="..\src\media\MediaThumbnailController.h">
       <Filter>Media</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\MediaProbe.h">
+    <ClInclude Include="..\src\media\MediaProbe.h">
       <Filter>Media</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\MediaDecoder.h">
+    <ClInclude Include="..\src\media\MediaDecoder.h">
       <Filter>Media</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\PreviewController.h">
+    <ClInclude Include="..\src\render\PreviewController.h">
       <Filter>Preview</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\PreviewFrameCache.h">
+    <ClInclude Include="..\src\media\PreviewFrameCache.h">
       <Filter>Preview</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\RecentProjects.h">
+    <ClInclude Include="..\src\app\RecentProjects.h">
       <Filter>Project</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\AudioWaveformCache.h">
+    <ClInclude Include="..\src\media\AudioWaveformCache.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\AudioGraphBuilder.h">
+    <ClInclude Include="..\src\render\AudioGraphBuilder.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\SequenceAudioController.h">
+    <ClInclude Include="..\src\render\SequenceAudioController.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\SequenceAudioRenderer.h">
+    <ClInclude Include="..\src\render\SequenceAudioRenderer.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\SequenceRenderPlan.h">
+    <ClInclude Include="..\src\render\SequenceRenderPlan.h">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ExportController.h">
+    <ClInclude Include="..\src\render\ExportController.h">
       <Filter>Export</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ExportSettings.h">
+    <ClInclude Include="..\src\project\ExportSettings.h">
       <Filter>Export</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\VideoRenderer.h">
+    <ClInclude Include="..\src\render\VideoRenderer.h">
       <Filter>Export</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\VideoExporter.h">
+    <ClInclude Include="..\src\render\VideoExporter.h">
       <Filter>Export</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\VideoCompositor.h">
+    <ClInclude Include="..\src\render\VideoCompositor.h">
       <Filter>Rendering</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ProcessUtils.h">
+    <ClInclude Include="..\src\platform\ProcessUtils.h">
       <Filter>Utilities</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\FfmpegProcess.h">
+    <ClInclude Include="..\src\media\FfmpegProcess.h">
       <Filter>Utilities</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\ProcessRunner.h">
+    <ClInclude Include="..\src\platform\ProcessRunner.h">
       <Filter>Utilities</Filter>
     </ClInclude>
-    <ClInclude Include="..\src\MediaTools.h">
+    <ClInclude Include="..\src\media\MediaTools.h">
       <Filter>Utilities</Filter>
     </ClInclude>
   </ItemGroup>

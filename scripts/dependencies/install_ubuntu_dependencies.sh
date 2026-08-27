@@ -87,6 +87,5 @@ CMAKE_PREFIX_PATH, for example:
     -DCMAKE_PREFIX_PATH="$PREFIX"
   cmake --build build/native --parallel "$JOBS"
 
-FFmpeg and ffprobe were installed from APT. For a portable release bundle,
-copy their executable files into dist/ffmpeg/ after building.
+FFmpeg and ffprobe were installed from APT and are discovered through PATH.
 EOF

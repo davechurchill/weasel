@@ -52,7 +52,6 @@
 /tools/ffmpeg/ffmpeg
 /tools/ffmpeg/ffplay
 /tools/ffmpeg/ffprobe
-/dist/
 
 # OS and temporary files
 .DS_Store

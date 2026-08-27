@@ -166,21 +166,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
     endif()
 endforeach()
 
-# The Windows static build continues to stage its standalone Release folder.
-# Native macOS/Linux development installs normally use shared Homebrew/APT
-# libraries, so staging is opt-in there until a platform-specific bundle is
-# assembled with all of its runtime dependencies.
-set(weasel_stage_release_default OFF)
-if(WIN32)
-    set(weasel_stage_release_default ON)
-endif()
-option(WEASEL_STAGE_RELEASE_PACKAGE
-    "Stage the executable and bundled FFmpeg tools in Release"
-    ${weasel_stage_release_default})
-unset(weasel_stage_release_default)
-
-# Windows uses .exe tools; macOS and Linux use their native extensionless
-# ffmpeg and ffprobe binaries when an explicit package is staged.
+# Windows uses .exe tools; macOS and Linux use extensionless tool names.
 set(WEASEL_FFMPEG_TOOL_SUFFIX "")
 if(WIN32)
     set(WEASEL_FFMPEG_TOOL_SUFFIX ".exe")
@@ -205,28 +191,6 @@ if(EXISTS "${weasel_ffmpeg_executable}" AND EXISTS "${weasel_ffprobe_executable}
     )
 endif()
 
-set(WEASEL_STAGE_CONFIG "$<CONFIG>")
-if(NOT CMAKE_CONFIGURATION_TYPES)
-    set(WEASEL_STAGE_CONFIG "${CMAKE_BUILD_TYPE}")
-endif()
-
-if(WEASEL_STAGE_RELEASE_PACKAGE)
-    add_custom_target(WeaselReleasePackage ALL
-        COMMAND "${CMAKE_COMMAND}"
-            "-DWEASEL_CONFIG=${WEASEL_STAGE_CONFIG}"
-            "-DWEASEL_EXECUTABLE=$<TARGET_FILE:Weasel>"
-            "-DWEASEL_PACKAGED_FFMPEG_DIR=${WEASEL_PACKAGED_FFMPEG_DIR}"
-            "-DWEASEL_FFMPEG_TOOL_SUFFIX=${WEASEL_FFMPEG_TOOL_SUFFIX}"
-            "-DWEASEL_DIST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/dist"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRelease.cmake"
-        DEPENDS Weasel
-        COMMENT "Staging the standalone Release package"
-        VERBATIM
-    )
-endif()
-
 if(NOT WIN32)
-    # The staging target is convenient for local builds. CMake install remains
-    # available to native package managers and CI systems.
     install(TARGETS Weasel RUNTIME DESTINATION ".")
 endif()

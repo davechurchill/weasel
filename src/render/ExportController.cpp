@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -60,6 +61,24 @@ namespace
         return buffer;
     }
 
+    ImTextureID ImGuiTextureId(unsigned int textureHandle)
+    {
+        static_assert(sizeof(textureHandle) <= sizeof(ImTextureID));
+        ImTextureID textureId{};
+        std::memcpy(&textureId, &textureHandle, sizeof(textureHandle));
+        return textureId;
+    }
+
+    void DrawTexture(const sf::Texture& texture, const ImVec2& size)
+    {
+        const ImTextureID textureId = ImGuiTextureId(texture.getNativeHandle());
+#if IMGUI_VERSION_NUM >= 19200
+        ImGui::Image(ImTextureRef(textureId), size);
+#else
+        ImGui::Image(textureId, size);
+#endif
+    }
+
 }
 
 namespace weasel
@@ -84,19 +103,19 @@ namespace weasel
                                        const std::filesystem::path& outputPath,
                                        std::string& error)
     {
-        if (!m_exporter.start(project, ffmpegPath, outputPath, error))
+        m_startupError.clear();
+        m_hasExportPreview = false;
+        if (!showEncodingWindow(mainWindow, error))
         {
             return false;
         }
 
-        if (showEncodingWindow(mainWindow, error))
+        if (m_exporter.start(project, ffmpegPath, outputPath, error))
         {
             return true;
         }
 
-        // Do not leave an invisible background export running when its only
-        // progress surface could not be created.
-        m_exporter.cancel();
+        m_startupError = error.empty() ? "Could not start the export." : error;
         return false;
     }
 
@@ -197,6 +216,52 @@ namespace weasel
         if (!exportStatus.outputPath.empty())
         {
             ImGui::TextDisabled("%s", exportStatus.outputPath.string().c_str());
+        }
+
+        if (!m_startupError.empty())
+        {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f, 0.43f, 0.43f, 1.0f), "Export could not start");
+            ImGui::TextWrapped("%s", m_startupError.c_str());
+        }
+
+        bool showPreview = m_exporter.previewEnabled();
+        if (ImGui::Checkbox("Show current frame (updates once per second)", &showPreview))
+        {
+            m_exporter.setPreviewEnabled(showPreview);
+            if (!showPreview)
+            {
+                m_hasExportPreview = false;
+            }
+        }
+        if (showPreview)
+        {
+            if (std::optional<ExportPreviewFrame> frame = m_exporter.takePreviewFrame())
+            {
+                const sf::Vector2u size(static_cast<unsigned int>(frame->width),
+                                        static_cast<unsigned int>(frame->height));
+                if (!m_exportPreviewTexture)
+                {
+                    m_exportPreviewTexture = std::make_unique<sf::Texture>();
+                }
+                if (m_exportPreviewTexture->getSize() == size || m_exportPreviewTexture->resize(size))
+                {
+                    m_exportPreviewTexture->update(frame->rgba.data());
+                    m_hasExportPreview = true;
+                }
+            }
+            if (m_hasExportPreview)
+            {
+                const sf::Vector2u size = m_exportPreviewTexture->getSize();
+                const float width = static_cast<float>(size.x);
+                const float height = static_cast<float>(size.y);
+                const float scale = ImGui::GetContentRegionAvail().x / width;
+                DrawTexture(*m_exportPreviewTexture, ImVec2(width * scale, height * scale));
+            }
+            else
+            {
+                ImGui::TextDisabled("Waiting for the next rendered frame...");
+            }
         }
 
         if (exportStatus.state == ExportState::Running)
@@ -333,6 +398,8 @@ namespace weasel
         }
 
         static_cast<void>(m_encodingWindow->setActive(true));
+        m_exportPreviewTexture.reset();
+        m_hasExportPreview = false;
         if (m_encodingImGuiInitialized)
         {
             ImGui::SFML::Shutdown(*m_encodingWindow);

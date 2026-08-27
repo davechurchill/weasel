@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace weasel
 {
@@ -20,6 +21,13 @@ namespace weasel
         Succeeded,
         Failed,
         Cancelled
+    };
+
+    struct ExportPreviewFrame
+    {
+        int                       width = 0;
+        int                       height = 0;
+        std::vector<std::uint8_t> rgba;
     };
 
     struct ExportStatus
@@ -51,6 +59,8 @@ namespace weasel
         std::string         m_ffmpegCommand;
         std::thread         m_worker;
         std::atomic_bool    m_cancelRequested = false;
+        std::atomic_bool    m_previewEnabled = false;
+        std::optional<ExportPreviewFrame> m_pendingPreviewFrame;
         std::optional<std::chrono::steady_clock::time_point> m_exportStartedAt;
         mutable std::optional<std::chrono::steady_clock::time_point> m_exportEndedAt;
 
@@ -82,6 +92,10 @@ namespace weasel
         // Requests that the active FFmpeg process stop. The export is staged,
         // so a cancelled job never publishes a partial output file.
         void cancel();
+
+        void setPreviewEnabled(bool enabled);
+        bool previewEnabled() const noexcept;
+        std::optional<ExportPreviewFrame> takePreviewFrame();
 
         ExportStatus status() const;
         bool isRunning() const;

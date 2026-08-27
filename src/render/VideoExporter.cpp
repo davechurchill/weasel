@@ -6,6 +6,8 @@
 #include "platform/ProcessUtils.h"
 #include "render/SequenceRenderPlan.h"
 
+#include <SFML/Graphics/Image.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -456,6 +458,8 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             generation = m_nextGeneration++;
             m_ffmpegCommand.clear();
+            m_previewEnabled.store(false, std::memory_order_release);
+            m_pendingPreviewFrame.reset();
             m_exportStartedAt = std::chrono::steady_clock::now();
             m_exportEndedAt.reset();
             m_status = {
@@ -521,6 +525,29 @@ namespace weasel
         // child. Avoid signalling a stored PID here: a cancellation racing a
         // completed waitpid() could otherwise target a reused POSIX PID.
 #endif
+    }
+
+    void VideoExporter::setPreviewEnabled(bool enabled)
+    {
+        m_previewEnabled.store(enabled, std::memory_order_release);
+        if (!enabled)
+        {
+            std::lock_guard lock(m_mutex);
+            m_pendingPreviewFrame.reset();
+        }
+    }
+
+    bool VideoExporter::previewEnabled() const noexcept
+    {
+        return m_previewEnabled.load(std::memory_order_acquire);
+    }
+
+    std::optional<ExportPreviewFrame> VideoExporter::takePreviewFrame()
+    {
+        std::lock_guard lock(m_mutex);
+        std::optional<ExportPreviewFrame> frame = std::move(m_pendingPreviewFrame);
+        m_pendingPreviewFrame.reset();
+        return frame;
     }
 
     ExportStatus VideoExporter::status() const
@@ -674,6 +701,32 @@ namespace weasel
             }
         };
 
+        const auto onPreviewFrame = [this](const sf::Image& image)
+        {
+            if (!m_previewEnabled.load(std::memory_order_acquire))
+            {
+                return;
+            }
+
+            const sf::Vector2u size = image.getSize();
+            if (size.x == 0 || size.y == 0 || !image.getPixelsPtr())
+            {
+                return;
+            }
+            ExportPreviewFrame frame;
+            frame.width = static_cast<int>(size.x);
+            frame.height = static_cast<int>(size.y);
+            const std::size_t pixelCount = static_cast<std::size_t>(size.x)
+                * static_cast<std::size_t>(size.y) * 4;
+            frame.rgba.assign(image.getPixelsPtr(), image.getPixelsPtr() + pixelCount);
+
+            std::lock_guard lock(m_mutex);
+            if (m_previewEnabled.load(std::memory_order_acquire))
+            {
+                m_pendingPreviewFrame = std::move(frame);
+            }
+        };
+
         std::vector<std::wstring> outputEncodingArguments;
         AppendOutputEncodingArguments(outputEncodingArguments, settings, videoEncoder, true, true);
 
@@ -701,7 +754,7 @@ namespace weasel
             m_processMutex,
             m_activeProcess
         };
-        VideoRenderer::Callbacks callbacks{ onCommandReady, reportProgress, onLog };
+        VideoRenderer::Callbacks callbacks{ onCommandReady, reportProgress, onPreviewFrame, onLog };
         VideoRenderer::Result rendererResult = renderer.run(request, callbacks);
         if (!rendererResult.rendererError.empty())
         {

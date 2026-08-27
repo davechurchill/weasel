@@ -280,6 +280,7 @@ namespace weasel
         std::vector<VideoCompositorLayer> layers;
         std::unordered_set<std::uint64_t> activeStreamIds;
         sf::Image renderedFrame;
+        auto nextPreviewFrameAt = std::chrono::steady_clock::now();
         bool rendererFailed = false;
         for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
@@ -376,6 +377,12 @@ namespace weasel
             {
                 callbacks.onProgress(std::min(duration,
                     static_cast<double>(frameIndex + 1) / frameRate));
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (callbacks.onPreviewFrame && now >= nextPreviewFrameAt)
+            {
+                callbacks.onPreviewFrame(renderedFrame);
+                nextPreviewFrameAt = now + std::chrono::seconds(1);
             }
         }
 

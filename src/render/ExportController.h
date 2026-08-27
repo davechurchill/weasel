@@ -3,6 +3,8 @@
 #include "project/ProjectData.h"
 #include "render/VideoExporter.h"
 
+#include <SFML/Graphics/Texture.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -41,6 +43,9 @@ namespace weasel
         std::unique_ptr<sf::RenderWindow>     m_encodingWindow;
         bool                                  m_encodingImGuiInitialized = false;
         bool                                  m_encodingStyleRefreshRequested = false;
+        std::string                           m_startupError;
+        std::unique_ptr<sf::Texture>          m_exportPreviewTexture;
+        bool                                  m_hasExportPreview = false;
 
         [[nodiscard]] bool openEncodingWindow(sf::RenderWindow& mainWindow, std::string& error);
         void destroyEncodingWindow();

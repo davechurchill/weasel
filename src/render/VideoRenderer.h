@@ -12,6 +12,11 @@
 #include <string_view>
 #include <vector>
 
+namespace sf
+{
+    class Image;
+}
+
 namespace weasel
 {
     // Renders the sequence through an off-screen copy of the monitor's GPU
@@ -39,6 +44,7 @@ namespace weasel
         {
             std::function<void(const std::vector<std::wstring>&)> onCommandReady;
             std::function<void(double)>                            onProgress;
+            std::function<void(const sf::Image&)>                  onPreviewFrame;
             FfmpegOutputCallback                                  onLog;
         };
 

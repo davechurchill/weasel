@@ -47,7 +47,7 @@ find_package(ImGui-SFML CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
 
-add_executable(Weasel
+add_executable(Weasel WIN32
     src/app/main.cpp
     src/app/Editor.cpp
     src/app/EditorState.cpp
@@ -89,7 +89,6 @@ endif()
 if(WIN32)
     target_compile_definitions(Weasel PRIVATE
         WIN32
-        _CONSOLE
         UNICODE
         _UNICODE
     )

@@ -1,4 +1,4 @@
-![Weasel video editor](weasel.png)
+![Weasel video editor](weasel.jpg)
 
 # Weasel
 

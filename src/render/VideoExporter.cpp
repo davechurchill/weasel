@@ -681,6 +681,15 @@ namespace weasel
                                          std::clamp(clampedSeconds / exportDuration, 0.0, 1.0));
             m_status.outputFileSizeBytes = std::max(m_status.outputFileSizeBytes, outputFileSizeBytes);
 
+            // Rendering progress reaches the end before FFmpeg has flushed
+            // its encoder and written the container trailer. Keep that final
+            // phase explicit until the process exits successfully.
+            if (clampedSeconds >= exportDuration - 0.000001)
+            {
+                m_status.message = "Finalizing export...";
+                m_status.estimatedRemainingSeconds = 0.0;
+            }
+
             const double elapsedSeconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - exportStartedAt).count();
             const double encodedSeconds = m_status.processedSeconds;

@@ -77,64 +77,22 @@ namespace
         return error ? std::filesystem::path(".") : currentDirectory;
     }
 
-    bool HasExistingEditorData(const std::filesystem::path& applicationDirectory)
-    {
-        constexpr std::array<std::string_view, 3> dataDirectories = {
-            "projects", "exports", "presets"
-        };
-        for (const std::string_view directory : dataDirectories)
-        {
-            std::error_code error;
-            if (std::filesystem::exists(applicationDirectory / std::string(directory), error) && !error)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     std::filesystem::path UserDataDirectory(const std::filesystem::path& applicationDirectory)
     {
-        // Preserve an existing portable/unpacked installation's data location.
-        // New installations use a per-user writable directory.
-        if (HasExistingEditorData(applicationDirectory))
-        {
-            return applicationDirectory;
-        }
+        // Keep portable-build metadata beside the executable rather than in
+        // a platform user-data directory. Projects remain separate from this
+        // directory in the sibling "projects" folder.
+        return applicationDirectory / "weasel-data";
+    }
 
-#ifdef _WIN32
-        const DWORD requiredLength = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
-        if (requiredLength > 0)
-        {
-            std::vector<wchar_t> value(static_cast<std::size_t>(requiredLength) + 1, L'\0');
-            const DWORD copiedLength = GetEnvironmentVariableW(L"LOCALAPPDATA",
-                                                                value.data(),
-                                                                static_cast<DWORD>(value.size()));
-            if (copiedLength > 0 && static_cast<std::size_t>(copiedLength) < value.size())
-            {
-                return std::filesystem::path(value.data()) / "Weasel";
-            }
-        }
-#elif defined(__APPLE__)
-        if (const char* home = std::getenv("HOME"); home && *home)
-        {
-            return std::filesystem::path(home) / "Library" / "Application Support" / "Weasel";
-        }
-#else
-        if (const char* xdgDataHome = std::getenv("XDG_DATA_HOME"); xdgDataHome && *xdgDataHome)
-        {
-            return std::filesystem::path(xdgDataHome) / "Weasel";
-        }
-        if (const char* home = std::getenv("HOME"); home && *home)
-        {
-            return std::filesystem::path(home) / ".local" / "share" / "Weasel";
-        }
-#endif
+    std::filesystem::path ProjectsDirectory(const std::filesystem::path& applicationDirectory)
+    {
+        return applicationDirectory / "projects";
+    }
 
-        // This is mainly for portable/unpacked builds where the executable
-        // directory is deliberately writable, or for unusually restricted
-        // environments with no usable user-data environment variable.
-        return applicationDirectory;
+    std::filesystem::path ExportsDirectory(const std::filesystem::path& applicationDirectory)
+    {
+        return applicationDirectory / "exports";
     }
 
     std::string Lowercase(std::string value)
@@ -2471,9 +2429,18 @@ namespace weasel
             }
             return false;
         }
-        const std::filesystem::path initialDirectory = m_editorState.hasProjectDirectory()
+        std::filesystem::path initialDirectory = m_editorState.hasProjectDirectory()
             ? m_editorState.projectDirectory().parent_path()
-            : m_dataDirectory;
+            : ProjectsDirectory(m_applicationDirectory);
+        if (!m_editorState.hasProjectDirectory())
+        {
+            std::error_code directoryError;
+            std::filesystem::create_directories(initialDirectory, directoryError);
+            if (directoryError)
+            {
+                initialDirectory = m_applicationDirectory;
+            }
+        }
         const std::optional<std::filesystem::path> selectedDirectory = ChooseProjectDirectoryForSave(
             m_nativeWindow, initialDirectory, *stem);
         if (!selectedDirectory)
@@ -2636,7 +2603,7 @@ namespace weasel
         const std::string suggestedName = stem ? *stem + ".mp4" : "final_edit.mp4";
         std::filesystem::path initialDirectory = m_editorState.hasProjectDirectory()
             ? m_editorState.exportDirectory()
-            : m_dataDirectory;
+            : ExportsDirectory(m_applicationDirectory);
         if (!initialDirectory.empty())
         {
             std::error_code directoryError;

@@ -36,7 +36,7 @@ namespace weasel
     {
         std::string       outputFileName = "final_edit.mp4";
         ExportCodec       codec = ExportCodec::H264;
-        bool              useGpuEncoding = false;
+        bool              useGpuEncoding = true;
         ExportRateControl rateControl = ExportRateControl::ConstantQuality;
         ExportPreset      preset = ExportPreset::Medium;
         int               crf = 18;

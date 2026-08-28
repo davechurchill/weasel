@@ -186,14 +186,23 @@ namespace weasel
 
         const ExportStatus exportStatus = m_exporter.status();
         const double clampedProgress = std::clamp(exportStatus.progress, 0.0, 1.0);
+        const bool finalizing = exportStatus.state == ExportState::Running && clampedProgress >= 1.0;
+        const double displayedProgress = finalizing ? 0.99 : clampedProgress;
         char progressText[64]{};
-        std::snprintf(progressText, sizeof(progressText), "%.0f%%", clampedProgress * 100.0);
-        const bool exportComplete = exportStatus.state == ExportState::Succeeded || clampedProgress >= 1.0;
+        if (finalizing)
+        {
+            std::snprintf(progressText, sizeof(progressText), "Finalizing...");
+        }
+        else
+        {
+            std::snprintf(progressText, sizeof(progressText), "%.0f%%", clampedProgress * 100.0);
+        }
+        const bool exportComplete = exportStatus.state == ExportState::Succeeded;
         if (exportComplete)
         {
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.22f, 0.72f, 0.40f, 1.0f));
         }
-        ImGui::ProgressBar(static_cast<float>(clampedProgress), ImVec2(-1.0f, 0.0f), progressText);
+        ImGui::ProgressBar(static_cast<float>(displayedProgress), ImVec2(-1.0f, 0.0f), progressText);
         if (exportComplete)
         {
             ImGui::PopStyleColor();

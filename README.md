@@ -21,6 +21,21 @@ my-project/
 
 Imported video, audio, image, and LUT files are referenced from their existing locations; Weasel does not copy them into the project folder. Moving or renaming a referenced file after importing it can make it unavailable to the project.
 
+## Portable application data
+
+Weasel stores its own metadata beside the executable, rather than in the operating system's app-data directory:
+
+```text
+bin/
+├── Weasel.exe
+├── ffmpeg/
+├── weasel-data/       # recent-project list and clip presets
+├── projects/          # default location for new projects
+└── exports/           # default location before a project is saved
+```
+
+The `bin` folder must be writable for these defaults to work.
+
 ## Building
 
 Run the commands below from the repository root. Release builds are written to `bin/Weasel.exe` on Windows and `bin/Weasel` on Linux and macOS.

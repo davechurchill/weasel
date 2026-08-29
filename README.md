@@ -21,6 +21,10 @@ my-project/
 
 Imported video, audio, image, and LUT files are referenced from their existing locations; Weasel does not copy them into the project folder. Moving or renaming a referenced file after importing it can make it unavailable to the project.
 
+## Download 
+
+- [Windows x64](https://davechurchill.ca/code/weasel/weasel-windows-x64.zip)
+
 ## Portable application data
 
 Weasel stores its own metadata beside the executable, rather than in the operating system's app-data directory:

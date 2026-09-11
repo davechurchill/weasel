@@ -234,7 +234,9 @@ namespace weasel
             ImGui::TextWrapped("%s", m_startupError.c_str());
         }
 
-        bool showPreview = m_exporter.previewEnabled();
+        const bool previewAvailable = m_exporter.previewAvailable();
+        bool showPreview = previewAvailable && m_exporter.previewEnabled();
+        ImGui::BeginDisabled(!previewAvailable);
         if (ImGui::Checkbox("Show current frame (updates once per second)", &showPreview))
         {
             m_exporter.setPreviewEnabled(showPreview);
@@ -242,6 +244,11 @@ namespace weasel
             {
                 m_hasExportPreview = false;
             }
+        }
+        ImGui::EndDisabled();
+        if (!previewAvailable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("Current-frame preview is available only for Shader Render.");
         }
         if (showPreview)
         {
@@ -282,12 +289,18 @@ namespace weasel
             }
             ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(exportStatus.cancelRequested || exportStatus.finishRequested);
+            const bool finishAvailable = m_exporter.finishNowAvailable();
+            ImGui::BeginDisabled(exportStatus.cancelRequested || exportStatus.finishRequested
+                                 || !finishAvailable);
             if (ImGui::Button("Finish Export Now", ImVec2(-1.0f, 0.0f)))
             {
                 m_exporter.finishNow();
             }
             ImGui::EndDisabled();
+            if (!finishAvailable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Finish Export Now is available only for Shader Render.");
+            }
         }
 
         if (ImGui::CollapsingHeader("FFmpeg details", ImGuiTreeNodeFlags_DefaultOpen))

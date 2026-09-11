@@ -256,6 +256,7 @@ namespace weasel
         document["assets"] = ProjectFileDetail::Json::array();
         document["export"] = {
             { "outputFileName", project.exportSettings().outputFileName },
+            { "renderer", static_cast<int>(project.exportSettings().renderer) },
             { "codec", static_cast<int>(project.exportSettings().codec) },
             { "useGpuEncoding", project.exportSettings().useGpuEncoding },
             { "rateControl", static_cast<int>(project.exportSettings().rateControl) },
@@ -477,6 +478,8 @@ namespace weasel
             loaded.m_nextTrackId = 1;
 
             loaded.exportSettings().outputFileName = storedExport.at("outputFileName").get<std::string>();
+            loaded.exportSettings().renderer = static_cast<ExportRenderer>(storedExport.value(
+                "renderer", static_cast<int>(ExportRenderer::Shader)));
             loaded.exportSettings().codec = static_cast<ExportCodec>(storedExport.at("codec").get<int>());
             loaded.exportSettings().useGpuEncoding = storedExport.at("useGpuEncoding").get<bool>();
             loaded.exportSettings().rateControl = static_cast<ExportRateControl>(storedExport.at("rateControl").get<int>());

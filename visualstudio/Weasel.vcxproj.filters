@@ -34,6 +34,7 @@
     <ClCompile Include="..\src\render\SequenceAudioRenderer.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\SequenceRenderPlan.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\ExportController.cpp"><Filter>render</Filter></ClCompile>
+    <ClCompile Include="..\src\render\FfmpegRenderer.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoRenderer.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoExporter.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoCompositor.cpp"><Filter>render</Filter></ClCompile>
@@ -71,6 +72,7 @@
     <ClInclude Include="..\src\render\SequenceAudioRenderer.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\SequenceRenderPlan.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\ExportController.h"><Filter>render</Filter></ClInclude>
+    <ClInclude Include="..\src\render\FfmpegRenderer.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\project\ExportSettings.h"><Filter>project</Filter></ClInclude>
     <ClInclude Include="..\src\render\VideoRenderer.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\VideoExporter.h"><Filter>render</Filter></ClInclude>

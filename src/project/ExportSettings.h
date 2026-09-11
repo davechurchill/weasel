@@ -5,6 +5,12 @@
 
 namespace weasel
 {
+    enum class ExportRenderer
+    {
+        Shader,
+        Ffmpeg
+    };
+
     enum class ExportCodec
     {
         H264,
@@ -35,6 +41,7 @@ namespace weasel
     struct ExportSettings
     {
         std::string       outputFileName = "final_edit.mp4";
+        ExportRenderer    renderer = ExportRenderer::Shader;
         ExportCodec       codec = ExportCodec::H264;
         bool              useGpuEncoding = true;
         ExportRateControl rateControl = ExportRateControl::ConstantQuality;
@@ -49,6 +56,11 @@ namespace weasel
 
     inline void NormalizeExportSettings(ExportSettings& settings)
     {
+        if (settings.renderer != ExportRenderer::Shader
+            && settings.renderer != ExportRenderer::Ffmpeg)
+        {
+            settings.renderer = ExportRenderer::Shader;
+        }
         if (settings.codec != ExportCodec::H264 && settings.codec != ExportCodec::H265)
         {
             settings.codec = ExportCodec::H264;

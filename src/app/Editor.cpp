@@ -1731,6 +1731,26 @@ namespace weasel
                     }
                 }
 
+                if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    const char* rendererOptions[] = { "Shader Render", "FFmpeg Render" };
+                    int renderer = static_cast<int>(editedExportSettings.renderer);
+                    settingLabel("Renderer");
+                    if (ImGui::Combo("##exportRenderer", &renderer, rendererOptions, 2))
+                    {
+                        editedExportSettings.renderer = static_cast<ExportRenderer>(renderer);
+                        exportSettingsChanged = true;
+                    }
+                    if (editedExportSettings.renderer == ExportRenderer::Shader)
+                    {
+                        ImGui::TextWrapped("Full-quality rendering for complex timelines and shader effects.");
+                    }
+                    else
+                    {
+                        ImGui::TextWrapped("Faster for long videos with simple edits. Shader clip effects require Shader Render.");
+                    }
+                }
+
                 if (ImGui::CollapsingHeader("Video encoding", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     ImGui::TextDisabled("Sequence: %d x %d  @ %.2f fps", m_project.sequence().width,
@@ -1751,7 +1771,7 @@ namespace weasel
                     }
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("Uses an available hardware video encoder. The compositor always renders on the GPU.");
+                        ImGui::SetTooltip("Uses an available hardware video encoder. This is separate from the selected renderer.");
                     }
 
                     const char* presetOptions[] = { "Very fast", "Fast", "Medium", "Slow", "Very slow" };

@@ -67,6 +67,7 @@ add_executable(Weasel WIN32
     src/project/ProjectData.cpp
     src/render/AudioGraphBuilder.cpp
     src/render/ExportController.cpp
+    src/render/FfmpegRenderer.cpp
     src/render/PreviewController.cpp
     src/render/SequenceAudioController.cpp
     src/render/SequenceAudioRenderer.cpp

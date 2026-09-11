@@ -62,6 +62,7 @@ namespace weasel
         std::atomic_bool    m_cancelRequested = false;
         std::atomic_bool    m_finishRequested = false;
         std::atomic_bool    m_previewEnabled = false;
+        std::atomic<ExportRenderer> m_activeRenderer = ExportRenderer::Shader;
         std::optional<ExportPreviewFrame> m_pendingPreviewFrame;
         std::optional<std::chrono::steady_clock::time_point> m_exportStartedAt;
         mutable std::optional<std::chrono::steady_clock::time_point> m_exportEndedAt;
@@ -100,6 +101,8 @@ namespace weasel
 
         void setPreviewEnabled(bool enabled);
         bool previewEnabled() const noexcept;
+        bool previewAvailable() const noexcept;
+        bool finishNowAvailable() const noexcept;
         std::optional<ExportPreviewFrame> takePreviewFrame();
 
         ExportStatus status() const;

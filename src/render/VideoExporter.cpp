@@ -1,5 +1,6 @@
 #include "render/VideoExporter.h"
 
+#include "render/FfmpegRenderer.h"
 #include "render/VideoRenderer.h"
 #include "media/FfmpegProcess.h"
 #include "media/MediaTools.h"
@@ -430,6 +431,8 @@ namespace weasel
 
         ProjectData preparedProject = project;
         preparedProject.normalize();
+        m_activeRenderer.store(preparedProject.exportSettings().renderer, std::memory_order_release);
+        m_previewEnabled.store(false, std::memory_order_release);
         SequenceRenderPlan plan;
         SequenceRenderPlanOptions planOptions;
         planOptions.validateLuts = true;
@@ -438,6 +441,12 @@ namespace weasel
             || plan.entries().empty())
         {
             error = validationError.empty() ? "Add at least one clip to the sequence before exporting." : validationError;
+            return false;
+        }
+        if (preparedProject.exportSettings().renderer == ExportRenderer::Ffmpeg
+            && !FfmpegRenderer::validate(plan, validationError))
+        {
+            error = validationError;
             return false;
         }
 
@@ -459,7 +468,6 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             generation = m_nextGeneration++;
             m_ffmpegCommand.clear();
-            m_previewEnabled.store(false, std::memory_order_release);
             m_pendingPreviewFrame.reset();
             m_exportStartedAt = std::chrono::steady_clock::now();
             m_exportEndedAt.reset();
@@ -530,6 +538,10 @@ namespace weasel
 
     void VideoExporter::finishNow()
     {
+        if (!finishNowAvailable())
+        {
+            return;
+        }
         m_finishRequested.store(true, std::memory_order_release);
         std::lock_guard lock(m_mutex);
         if (m_status.state != ExportState::Running || m_status.cancelRequested)
@@ -542,6 +554,7 @@ namespace weasel
 
     void VideoExporter::setPreviewEnabled(bool enabled)
     {
+        enabled = enabled && previewAvailable();
         m_previewEnabled.store(enabled, std::memory_order_release);
         if (!enabled)
         {
@@ -553,6 +566,16 @@ namespace weasel
     bool VideoExporter::previewEnabled() const noexcept
     {
         return m_previewEnabled.load(std::memory_order_acquire);
+    }
+
+    bool VideoExporter::previewAvailable() const noexcept
+    {
+        return m_activeRenderer.load(std::memory_order_acquire) == ExportRenderer::Shader;
+    }
+
+    bool VideoExporter::finishNowAvailable() const noexcept
+    {
+        return m_activeRenderer.load(std::memory_order_acquire) == ExportRenderer::Shader;
     }
 
     std::optional<ExportPreviewFrame> VideoExporter::takePreviewFrame()
@@ -593,6 +616,7 @@ namespace weasel
                                      std::uint64_t generation)
     {
         const ExportSettings& settings = project.exportSettings();
+        const bool ffmpegRenderer = settings.renderer == ExportRenderer::Ffmpeg;
         const auto exportStartedAt = std::chrono::steady_clock::now();
         const auto setCancelled = [this, &outputPath](const std::string& log)
         {
@@ -759,35 +783,70 @@ namespace weasel
             if (m_status.state == ExportState::Running)
             {
                 m_ffmpegCommand = FormatMediaCommand(ffmpegPath, arguments);
+                const bool directFfmpeg = m_activeRenderer.load(std::memory_order_acquire)
+                    == ExportRenderer::Ffmpeg;
                 if (!m_status.finishRequested)
                 {
-                    m_status.message = "Rendering with the GPU compositor...";
+                    m_status.message = directFfmpeg
+                        ? "Rendering directly with FFmpeg..."
+                        : "Rendering with Shader Render...";
                 }
-                m_status.log = std::string("GPU compositor\nEncoder: ")
+                m_status.log = std::string(directFfmpeg ? "FFmpeg Render\nEncoder: " : "Shader Render\nEncoder: ")
                     + videoEncoder.displayName + "\nLive FFmpeg output:\n";
             }
         };
 
-        VideoRenderer renderer;
-        VideoRenderer::Request request{
-            project,
-            ffmpegPath,
-            stagingPath,
-            outputEncodingArguments,
-            generation,
-            m_cancelRequested,
-            m_finishRequested,
-            m_processMutex,
-            m_activeProcess
-        };
-        VideoRenderer::Callbacks callbacks{ onCommandReady, reportProgress, onPreviewFrame, onLog };
-        VideoRenderer::Result rendererResult = renderer.run(request, callbacks);
-        if (!rendererResult.rendererError.empty())
+        FfmpegProcessResult result;
+        double completedDuration = exportDuration;
+        bool partialExport = false;
+        std::string rendererError;
+        if (ffmpegRenderer)
+        {
+            FfmpegRenderer renderer;
+            FfmpegRenderer::Request request{
+                project,
+                ffmpegPath,
+                stagingPath,
+                outputEncodingArguments,
+                generation,
+                m_cancelRequested,
+                m_processMutex,
+                m_activeProcess
+            };
+            FfmpegRenderer::Callbacks callbacks{ onCommandReady, reportProgress, onLog };
+            FfmpegRenderer::Result rendererResult = renderer.run(request, callbacks);
+            rendererError = std::move(rendererResult.rendererError);
+            result = std::move(rendererResult.ffmpeg);
+        }
+        else
+        {
+            VideoRenderer renderer;
+            VideoRenderer::Request request{
+                project,
+                ffmpegPath,
+                stagingPath,
+                outputEncodingArguments,
+                generation,
+                m_cancelRequested,
+                m_finishRequested,
+                m_processMutex,
+                m_activeProcess
+            };
+            VideoRenderer::Callbacks callbacks{ onCommandReady, reportProgress, onPreviewFrame, onLog };
+            VideoRenderer::Result rendererResult = renderer.run(request, callbacks);
+            rendererError = std::move(rendererResult.rendererError);
+            result = std::move(rendererResult.ffmpeg);
+            completedDuration = rendererResult.renderedDuration > 0.0
+                ? rendererResult.renderedDuration
+                : exportDuration;
+            partialExport = rendererResult.finishedEarly;
+        }
+        if (!rendererError.empty())
         {
             weasel::RemoveFileQuietly(stagingPath);
             if (m_cancelRequested.load(std::memory_order_acquire))
             {
-                setCancelled(rendererResult.ffmpeg.log);
+                setCancelled(result.log);
             }
             else
             {
@@ -795,17 +854,12 @@ namespace weasel
                 m_status = {
                     ExportState::Failed,
                     outputPath,
-                    "GPU compositor failed.",
-                    rendererResult.rendererError
-                        + (rendererResult.ffmpeg.log.empty()
-                            ? ""
-                            : "\n" + TailText(rendererResult.ffmpeg.log))
+                    ffmpegRenderer ? "FFmpeg renderer failed." : "Shader renderer failed.",
+                    rendererError + (result.log.empty() ? "" : "\n" + TailText(result.log))
                 };
             }
             return;
         }
-
-        weasel::FfmpegProcessResult result = std::move(rendererResult.ffmpeg);
 
         if (result.cancelled || m_cancelRequested.load(std::memory_order_acquire))
         {
@@ -844,10 +898,6 @@ namespace weasel
             };
             return;
         }
-        const double completedDuration = rendererResult.renderedDuration > 0.0
-            ? rendererResult.renderedDuration
-            : exportDuration;
-        const bool partialExport = rendererResult.finishedEarly;
         bool cancelledBeforePublish = false;
         std::string commitError;
         {

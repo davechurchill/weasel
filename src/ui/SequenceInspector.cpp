@@ -316,7 +316,7 @@ namespace weasel
                     const float audioProgress = std::clamp(
                         static_cast<float>(sequenceAudioStatus.progress), 0.0f, 1.0f);
                     char progressText[64]{};
-                    std::snprintf(progressText, sizeof(progressText), "Generating sequence WAV %.0f%%",
+                    std::snprintf(progressText, sizeof(progressText), "Generating clip audio %.0f%%",
                                   audioProgress * 100.0f);
                     if (audioProgress >= 1.0f)
                     {
@@ -329,11 +329,11 @@ namespace weasel
                 }
                 else if (sequenceAudioReady)
                 {
-                    DrawGreenProgressBar(1.0f, "Sequence audio ready");
+                    DrawGreenProgressBar(1.0f, "Timeline audio ready");
                 }
                 else
                 {
-                    ImGui::ProgressBar(0.0f, ImVec2(-1.0f, 0.0f), "Preparing sequence audio...");
+                    ImGui::ProgressBar(0.0f, ImVec2(-1.0f, 0.0f), "Preparing clip audio...");
                 }
             }
         }

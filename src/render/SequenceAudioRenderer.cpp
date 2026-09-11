@@ -17,8 +17,6 @@
 
 namespace
 {
-    using AudioClip = weasel::SequenceRenderEntry;
-
     std::string Number(double value)
     {
         std::ostringstream stream;
@@ -33,34 +31,32 @@ namespace
         return result.empty() ? "0" : result;
     }
 
-    std::vector<std::wstring> BuildArguments(const weasel::ProjectData& document,
-                                             const std::vector<AudioClip>& clips,
+    std::vector<std::wstring> BuildArguments(const weasel::SequenceRenderEntry& entry,
                                              const std::filesystem::path& stagingPath)
     {
-        // This intentionally mirrors VideoExporter's audio graph: every clip
-        // is source-trimmed, reset to zero, positioned on the timeline, and
-        // mixed with a sequence-length stereo silence bed. The final trim
-        // makes the PCM WAV exactly as long as the sequence.
-        const double sequenceDuration = std::max(0.05, document.duration());
+        // Reuse the export audio processing chain, but anchor this clip at
+        // zero. Its timeline position is applied later by the live mixer and
+        // therefore never participates in this cache file.
+        weasel::TimelineClip localClip = entry.clip;
+        const double sourceDuration = localClip.sourceDuration();
+        localClip.timelineStart = 0.0;
+        localClip.sourceIn = 0.0;
+        localClip.sourceOut = sourceDuration;
+        const double clipDuration = std::max(0.05, localClip.duration());
         std::ostringstream filters;
         filters.imbue(std::locale::classic());
 
-        std::vector<weasel::AudioGraphInput> audioInputs;
-        audioInputs.reserve(clips.size());
-        for (std::size_t index = 0; index < clips.size(); ++index)
-        {
-            audioInputs.push_back({ static_cast<int>(index), clips[index].clip });
-        }
-        weasel::AudioGraphBuilder::appendTimelineAudio(filters, audioInputs, sequenceDuration);
+        const std::vector<weasel::AudioGraphInput> audioInputs = { { 0, localClip } };
+        weasel::AudioGraphBuilder::appendTimelineAudio(filters, audioInputs, clipDuration);
         filters << "[audio]"
-                << "atrim=duration=" << Number(sequenceDuration)
+                << "atrim=duration=" << Number(clipDuration)
                 << ",asetpts=PTS-STARTPTS"
                 << ",aresample=48000"
                 << ",aformat=sample_rates=48000:sample_fmts=s16:channel_layouts=stereo"
                 << "[audio];";
 
         const std::string filterGraph = filters.str();
-        const std::string durationArgument = Number(sequenceDuration);
+        const std::string durationArgument = Number(clipDuration);
         std::vector<std::wstring> arguments = {
             L"-hide_banner",
             L"-nostdin",
@@ -73,11 +69,14 @@ namespace
             L"error",
             L"-y"
         };
-        for (const AudioClip& entry : clips)
-        {
-            arguments.push_back(L"-i");
-            arguments.push_back(weasel::WidePathArgument(entry.asset.path));
-        }
+        // Input-side seeking avoids decoding a long source from its beginning
+        // when only a late clip range needs to be cached.
+        arguments.push_back(L"-ss");
+        arguments.push_back(weasel::WideFromUtf8(Number(entry.clip.sourceIn)));
+        arguments.push_back(L"-t");
+        arguments.push_back(weasel::WideFromUtf8(Number(entry.clip.sourceDuration())));
+        arguments.push_back(L"-i");
+        arguments.push_back(weasel::WidePathArgument(entry.asset.path));
         arguments.push_back(L"-filter_complex");
         arguments.push_back(std::wstring(filterGraph.begin(), filterGraph.end()));
         arguments.push_back(L"-map");
@@ -110,8 +109,7 @@ namespace weasel
         }
     }
 
-    bool SequenceAudioRenderer::start(const ProjectData& project,
-                                      const std::vector<SequenceRenderEntry>& audioEntries,
+    bool SequenceAudioRenderer::start(const SequenceRenderEntry& audioEntry,
                                       const std::filesystem::path& ffmpegPath,
                                       const std::filesystem::path& outputWavPath,
                                       std::string& error)
@@ -119,7 +117,7 @@ namespace weasel
         std::lock_guard lifecycleLock(m_lifecycleMutex);
         if (isRunning())
         {
-            error = "Timeline audio is already being rendered.";
+            error = "Clip audio is already being rendered.";
             return false;
         }
         if (m_worker.joinable())
@@ -140,25 +138,22 @@ namespace weasel
             error = "Choose a temporary WAV output path first.";
             return false;
         }
-        if (audioEntries.empty())
+        if (!audioEntry.includeAudio || audioEntry.clip.duration() <= 0.0)
         {
-            error = "The sequence has no audio to render.";
+            error = "The selected clip has no audio to render.";
             return false;
         }
-        for (const SequenceRenderEntry& entry : audioEntries)
+        std::error_code mediaError;
+        if (!std::filesystem::exists(audioEntry.asset.path, mediaError) || mediaError)
         {
-            std::error_code filesystemError;
-            if (!std::filesystem::exists(entry.asset.path, filesystemError) || filesystemError)
-            {
-                error = "Media file is missing: " + entry.asset.path.string();
-                return false;
-            }
+            error = "Media file is missing: " + audioEntry.asset.path.string();
+            return false;
         }
 
-        ProjectData preparedProject = project;
-        preparedProject.normalize();
-        const double renderDuration = std::max(0.05, preparedProject.duration());
-        std::vector<SequenceRenderEntry> preparedAudioEntries = audioEntries;
+        SequenceRenderEntry preparedAudioEntry = audioEntry;
+        preparedAudioEntry.clip.speed = TimelineClip::normalizedSpeed(preparedAudioEntry.clip.speed);
+        preparedAudioEntry.clip.audio.normalize();
+        const double renderDuration = std::max(0.05, preparedAudioEntry.clip.duration());
 
         const std::filesystem::path outputDirectory = outputWavPath.parent_path();
         if (!outputDirectory.empty())
@@ -180,7 +175,7 @@ namespace weasel
             m_status = {
                 SequenceAudioRenderState::Rendering,
                 outputWavPath,
-                "Preparing timeline audio...",
+                "Preparing clip audio...",
                 {},
                 generation,
                 0.0,
@@ -194,8 +189,7 @@ namespace weasel
         {
             m_worker = std::thread(&SequenceAudioRenderer::renderWorker,
                                    this,
-                                   std::move(preparedProject),
-                                   std::move(preparedAudioEntries),
+                                   std::move(preparedAudioEntry),
                                    ffmpegPath,
                                    outputWavPath,
                                    generation);
@@ -208,7 +202,7 @@ namespace weasel
             m_status = {
                 SequenceAudioRenderState::Failed,
                 outputWavPath,
-                "Could not start the timeline-audio renderer.",
+                "Could not start the clip-audio renderer.",
                 exception.what(),
                 generation,
                 0.0,
@@ -228,7 +222,7 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             if (m_status.state == SequenceAudioRenderState::Rendering)
             {
-                m_status.message = "Cancelling timeline audio render...";
+                m_status.message = "Cancelling clip audio render...";
             }
         }
         std::lock_guard processLock(m_processMutex);
@@ -252,13 +246,12 @@ namespace weasel
         return m_status.state == SequenceAudioRenderState::Rendering;
     }
 
-    void SequenceAudioRenderer::renderWorker(ProjectData project,
-                                             std::vector<SequenceRenderEntry> audioEntries,
+    void SequenceAudioRenderer::renderWorker(SequenceRenderEntry audioEntry,
                                              std::filesystem::path ffmpegPath,
                                              std::filesystem::path outputWavPath,
                                              std::uint64_t generation)
     {
-        const double renderDuration = std::max(0.05, project.duration());
+        const double renderDuration = std::max(0.05, audioEntry.clip.duration());
         const auto setTerminalStatus = [this, &outputWavPath, generation, renderDuration](
             SequenceAudioRenderState state,
             const std::string& message,
@@ -291,7 +284,7 @@ namespace weasel
             if (m_status.state == SequenceAudioRenderState::Rendering
                 && m_status.generation == generation)
             {
-                m_status.message = "Generating timeline audio...";
+                m_status.message = "Generating clip audio...";
                 m_status.durationSeconds = renderDuration;
                 m_status.log.clear();
             }
@@ -359,7 +352,7 @@ namespace weasel
             }
         };
         const FfmpegProcessResult result = FfmpegProcess::run(ffmpegPath,
-                                                               BuildArguments(project, audioEntries, stagingPath),
+                                                               BuildArguments(audioEntry, stagingPath),
                                                                m_cancelRequested,
                                                                m_processMutex,
                                                                m_activeProcess,
@@ -369,7 +362,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(stagingPath);
             setTerminalStatus(SequenceAudioRenderState::Cancelled,
-                              "Timeline audio render cancelled.",
+                              "Clip audio render cancelled.",
                               TailText(result.log));
             return;
         }
@@ -377,7 +370,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(stagingPath);
             setTerminalStatus(SequenceAudioRenderState::Failed,
-                              "Could not run FFmpeg for timeline audio.",
+                              "Could not run FFmpeg for clip audio.",
                               result.error);
             return;
         }
@@ -385,7 +378,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(stagingPath);
             setTerminalStatus(SequenceAudioRenderState::Failed,
-                              "Timeline audio render did not complete.",
+                              "Clip audio render did not complete.",
                               result.error + (result.log.empty() ? "" : "\n" + TailText(result.log)));
             return;
         }
@@ -393,7 +386,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(stagingPath);
             setTerminalStatus(SequenceAudioRenderState::Failed,
-                              "FFmpeg audio render exited with code " + std::to_string(result.exitCode) + ".",
+                              "FFmpeg clip-audio render exited with code " + std::to_string(result.exitCode) + ".",
                               TailText(result.log));
             return;
         }
@@ -403,7 +396,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(stagingPath);
             setTerminalStatus(SequenceAudioRenderState::Failed,
-                              "Timeline audio was rendered but could not be published.",
+                              "Clip audio was rendered but could not be published.",
                               commitError);
             return;
         }
@@ -415,7 +408,7 @@ namespace weasel
         {
             weasel::RemoveFileQuietly(outputWavPath);
             setTerminalStatus(SequenceAudioRenderState::Cancelled,
-                              "Timeline audio render cancelled.",
+                              "Clip audio render cancelled.",
                               TailText(result.log));
             return;
         }
@@ -424,7 +417,7 @@ namespace weasel
         m_status = {
             SequenceAudioRenderState::Succeeded,
             outputWavPath,
-            "Timeline audio ready.",
+            "Clip audio ready.",
             TailText(result.log),
             generation,
             1.0,

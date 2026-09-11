@@ -14,14 +14,20 @@
 
 namespace weasel
 {
-    // Owns the non-UI pieces of live sequence audio: the asynchronous mixed
-    // WAV renderer, its streaming preview voice, and opt-in source waveforms.
-    // The caller supplies transport state each frame, while project changes
-    // are detected from a stable audio-only sequence signature.
+    // Owns the non-UI pieces of live sequence audio: per-clip processed WAV
+    // caches, a streaming timeline mixer, and opt-in source waveforms. Clip
+    // cache identities exclude timeline placement so moves and ripple edits
+    // only update the mix schedule.
     class SequenceAudioController
     {
     private:
         class Playback;
+
+        struct ClipCacheTarget
+        {
+            SequenceRenderEntry  entry;
+            std::filesystem::path cachePath;
+        };
 
         std::filesystem::path                       m_applicationDirectory;
         std::filesystem::path                       m_cacheDirectory;
@@ -32,22 +38,25 @@ namespace weasel
         bool                                        m_scrubAudioEnabled = true;
         bool                                        m_drawAudioWaveforms = false;
         long long                                   m_lastScrubAudioFrameIndex = -1;
-        bool                                        m_signatureKnown = false;
+        bool                                        m_layoutKnown = false;
         bool                                        m_renderQueued = false;
         bool                                        m_renderInFlight = false;
-        std::size_t                                 m_targetSignature = 0;
-        std::size_t                                 m_renderingSignature = 0;
-        std::filesystem::path                       m_targetCachePath;
+        bool                                        m_allClipsReady = false;
+        std::size_t                                 m_layoutSignature = 0;
+        std::vector<ClipCacheTarget>                m_clipTargets;
         std::filesystem::path                       m_renderingCachePath;
+        double                                      m_sequenceDuration = 0.0;
         std::chrono::steady_clock::time_point       m_changedAt{};
         std::string                                 m_error;
 
-        static std::size_t sequenceAudioSignature(
+        static std::size_t clipAudioSignature(const SequenceRenderEntry& audioEntry);
+        static std::size_t sequenceAudioLayoutSignature(
             double sequenceDuration,
             const std::vector<SequenceRenderEntry>& audioEntries);
+        bool refreshPlayback();
         bool requestWaveform(const MediaAsset& asset);
         std::vector<int> requestWaveforms(const std::vector<SequenceRenderEntry>& audioEntries);
-        void pruneSequenceAudioCache(const std::filesystem::path& keepPath) const;
+        void pruneClipAudioCache() const;
 
     public:
         SequenceAudioController(std::filesystem::path applicationDirectory = {},
@@ -58,7 +67,7 @@ namespace weasel
         SequenceAudioController& operator=(const SequenceAudioController&) = delete;
 
         // One project-local (or unsaved-temporary) directory for both source
-        // waveform files and rendered sequence-audio WAVs.
+        // waveform files and processed per-clip WAVs.
         void setCacheDirectory(std::filesystem::path cacheDirectory);
 
         bool playbackAudioEnabled() const noexcept;
@@ -83,14 +92,14 @@ namespace weasel
         void requestScrub(const ProjectData& project);
 
         // Call after restoring timeline state (for example undo/redo). The
-        // next update invalidates any old mixed WAV and queues the latest one.
+        // next update rebuilds the playback schedule and reuses valid clips.
         void invalidate();
 
         // Stops the current preview without discarding cached waveform work.
         void stopPlayback();
 
-        // Cancels timeline-audio rendering, clears its loaded WAV and all
-        // waveforms, and forgets the current signature. Suitable for New/Open.
+        // Cancels clip-audio rendering, clears playback and all waveforms, and
+        // forgets the current layout. Suitable for New/Open.
         void reset();
 
         SequenceAudioRenderStatus renderStatus() const;

@@ -47,7 +47,7 @@ find_package(ImGui-SFML CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
 
-add_executable(Weasel WIN32
+add_executable(Weasel
     src/app/main.cpp
     src/app/Editor.cpp
     src/app/EditorState.cpp

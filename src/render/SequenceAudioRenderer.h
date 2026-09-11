@@ -1,6 +1,5 @@
 #pragma once
 
-#include "project/ProjectData.h"
 #include "render/SequenceRenderPlan.h"
 
 #include <atomic>
@@ -9,13 +8,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace weasel
 {
     // A small background renderer used by the editor's live audio system. It
-    // produces a PCM WAV that represents the timeline audio at the moment
-    // start() is called; the ProjectData is copied before the worker begins.
+    // produces one processed PCM WAV for one timeline clip. Timeline placement
+    // is deliberately excluded so the cache survives moves and ripple edits.
     enum class SequenceAudioRenderState
     {
         Idle,
@@ -63,8 +61,7 @@ namespace weasel
         void*                       m_activeProcess = nullptr;
         std::uint64_t               m_nextGeneration = 1;
 
-        void renderWorker(ProjectData project,
-                          std::vector<SequenceRenderEntry> audioEntries,
+        void renderWorker(SequenceRenderEntry audioEntry,
                           std::filesystem::path ffmpegPath,
                           std::filesystem::path outputWavPath,
                           std::uint64_t generation);
@@ -79,8 +76,7 @@ namespace weasel
         // Starts one asynchronous render. The supplied output is committed
         // only after FFmpeg succeeds, so readers never see a partial WAV.
         // The output path should be a cache/temporary file owned by the caller.
-        bool start(const ProjectData& project,
-                   const std::vector<SequenceRenderEntry>& audioEntries,
+        bool start(const SequenceRenderEntry& audioEntry,
                    const std::filesystem::path& ffmpegPath,
                    const std::filesystem::path& outputWavPath,
                    std::string& error);

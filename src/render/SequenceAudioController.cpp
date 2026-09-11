@@ -2,20 +2,26 @@
 
 #include "media/MediaTools.h"
 
-#include <SFML/Audio/Music.hpp>
+#include <SFML/Audio/InputSoundFile.hpp>
 #include <SFML/Audio/SoundSource.hpp>
+#include <SFML/Audio/SoundStream.hpp>
 #include <SFML/System/Time.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -28,10 +34,13 @@ namespace
     constexpr double TransportJumpToleranceSeconds = 0.500;
     constexpr auto MinimumScrubRestartInterval = std::chrono::milliseconds(45);
     constexpr auto MinimumContinuousCorrectionInterval = std::chrono::milliseconds(500);
+    constexpr unsigned int ClipAudioChannelCount = 2;
+    constexpr unsigned int ClipAudioSampleRate = 48000;
+    constexpr std::uint64_t MixerChunkFrames = 2048;
+    constexpr std::size_t ClipAudioCacheFormatVersion = 1;
 
-    bool IsFinalSequenceAudioCacheFilename(std::string_view filename)
+    bool IsNumberedCacheFilename(std::string_view filename, std::string_view prefix)
     {
-        constexpr std::string_view prefix = "sequence-audio-";
         constexpr std::string_view suffix = ".wav";
         if (filename.size() <= prefix.size() + suffix.size()
             || filename.compare(0, prefix.size(), prefix) != 0
@@ -47,16 +56,237 @@ namespace
             return std::isdigit(character) != 0;
         });
     }
+
+    bool IsClipAudioCacheFilename(std::string_view filename)
+    {
+        return IsNumberedCacheFilename(filename, "clip-audio-");
+    }
+
+    bool IsLegacySequenceAudioCacheFilename(std::string_view filename)
+    {
+        return IsNumberedCacheFilename(filename, "sequence-audio-");
+    }
+
+    bool UsableAudioCache(const std::filesystem::path& path)
+    {
+        std::error_code error;
+        return std::filesystem::is_regular_file(path, error)
+            && !error && std::filesystem::file_size(path, error) > 44 && !error;
+    }
 }
 
 namespace weasel
 {
     class SequenceAudioController::Playback
     {
+    public:
+        struct Clip
+        {
+            int                   id = 0;
+            std::filesystem::path cachePath;
+            double                timelineStart = 0.0;
+            double                duration = 0.0;
+        };
+
     private:
-        std::unique_ptr<sf::Music>                  m_music;
+        class Mixer final : public sf::SoundStream
+        {
+        private:
+            struct Source
+            {
+                Clip                                clip;
+                std::unique_ptr<sf::InputSoundFile> file;
+                std::uint64_t                       timelineStartFrame = 0;
+                std::uint64_t                       frameCount = 0;
+            };
+
+            mutable std::mutex                  m_mutex;
+            std::vector<std::unique_ptr<Source>> m_sources;
+            std::vector<std::int64_t>            m_mixSamples;
+            std::vector<std::int16_t>            m_outputSamples;
+            std::vector<std::int16_t>            m_readSamples;
+            std::uint64_t                         m_nextFrame = 0;
+            std::uint64_t                         m_sequenceFrames = 1;
+            double                                m_durationSeconds = 0.0;
+
+            bool onGetData(Chunk& data) override
+            {
+                std::lock_guard lock(m_mutex);
+                if (m_sources.empty() || m_nextFrame >= m_sequenceFrames)
+                {
+                    data = {};
+                    return false;
+                }
+
+                const std::uint64_t blockStart = m_nextFrame;
+                const std::uint64_t frameCount = std::min(
+                    MixerChunkFrames, m_sequenceFrames - blockStart);
+                const std::uint64_t blockEnd = blockStart + frameCount;
+                const std::size_t sampleCount = static_cast<std::size_t>(
+                    frameCount * ClipAudioChannelCount);
+                m_mixSamples.assign(sampleCount, 0);
+
+                for (const std::unique_ptr<Source>& source : m_sources)
+                {
+                    const std::uint64_t sourceStart = source->timelineStartFrame;
+                    const std::uint64_t sourceEnd = sourceStart + source->frameCount;
+                    const std::uint64_t overlapStart = std::max(blockStart, sourceStart);
+                    const std::uint64_t overlapEnd = std::min(blockEnd, sourceEnd);
+                    if (overlapStart >= overlapEnd)
+                    {
+                        continue;
+                    }
+
+                    const std::uint64_t sourceSampleOffset = (overlapStart - sourceStart)
+                        * ClipAudioChannelCount;
+                    const std::uint64_t requestedSamples = (overlapEnd - overlapStart)
+                        * ClipAudioChannelCount;
+                    if (source->file->getSampleOffset() != sourceSampleOffset)
+                    {
+                        source->file->seek(sourceSampleOffset);
+                    }
+                    m_readSamples.resize(static_cast<std::size_t>(requestedSamples));
+                    const std::uint64_t samplesRead = source->file->read(
+                        m_readSamples.data(), requestedSamples);
+                    const std::size_t destinationOffset = static_cast<std::size_t>(
+                        (overlapStart - blockStart) * ClipAudioChannelCount);
+                    for (std::size_t sample = 0; sample < static_cast<std::size_t>(samplesRead); ++sample)
+                    {
+                        m_mixSamples[destinationOffset + sample] += m_readSamples[sample];
+                    }
+                }
+
+                m_outputSamples.resize(sampleCount);
+                for (std::size_t sample = 0; sample < sampleCount; ++sample)
+                {
+                    m_outputSamples[sample] = static_cast<std::int16_t>(std::clamp<std::int64_t>(
+                        m_mixSamples[sample],
+                        std::numeric_limits<std::int16_t>::min(),
+                        std::numeric_limits<std::int16_t>::max()));
+                }
+                m_nextFrame = blockEnd;
+                data.samples = m_outputSamples.data();
+                data.sampleCount = m_outputSamples.size();
+                return m_nextFrame < m_sequenceFrames;
+            }
+
+            void onSeek(sf::Time timeOffset) override
+            {
+                std::lock_guard lock(m_mutex);
+                const double seconds = std::clamp(
+                    static_cast<double>(timeOffset.asSeconds()), 0.0, m_durationSeconds);
+                m_nextFrame = std::min(m_sequenceFrames, static_cast<std::uint64_t>(
+                    std::llround(seconds * ClipAudioSampleRate)));
+            }
+
+        public:
+            Mixer()
+            {
+                initialize(ClipAudioChannelCount,
+                           ClipAudioSampleRate,
+                           { sf::SoundChannel::FrontLeft, sf::SoundChannel::FrontRight });
+                setLooping(false);
+            }
+
+            bool configure(const std::vector<Clip>& clips,
+                           double sequenceDuration,
+                           std::filesystem::path& failedPath,
+                           std::string& error)
+            {
+                stop();
+                std::vector<std::unique_ptr<Source>> previous;
+                {
+                    std::lock_guard lock(m_mutex);
+                    previous = std::move(m_sources);
+                }
+
+                std::unordered_map<int, std::unique_ptr<Source>> reusable;
+                for (std::unique_ptr<Source>& source : previous)
+                {
+                    reusable.emplace(source->clip.id, std::move(source));
+                }
+
+                bool allOpened = true;
+                std::vector<std::unique_ptr<Source>> next;
+                next.reserve(clips.size());
+                for (const Clip& clip : clips)
+                {
+                    std::unique_ptr<Source> source;
+                    if (const auto found = reusable.find(clip.id);
+                        found != reusable.end() && found->second->clip.cachePath == clip.cachePath)
+                    {
+                        source = std::move(found->second);
+                        reusable.erase(found);
+                    }
+                    else
+                    {
+                        auto file = std::make_unique<sf::InputSoundFile>();
+                        if (!file->openFromFile(clip.cachePath)
+                            || file->getChannelCount() != ClipAudioChannelCount
+                            || file->getSampleRate() != ClipAudioSampleRate)
+                        {
+                            if (failedPath.empty())
+                            {
+                                failedPath = clip.cachePath;
+                                error = "Could not open processed clip audio: " + clip.cachePath.string();
+                            }
+                            allOpened = false;
+                            continue;
+                        }
+                        source = std::make_unique<Source>();
+                        source->file = std::move(file);
+                    }
+
+                    source->clip = clip;
+                    source->timelineStartFrame = static_cast<std::uint64_t>(std::llround(
+                        std::max(0.0, clip.timelineStart) * ClipAudioSampleRate));
+                    const std::uint64_t scheduledFrames = static_cast<std::uint64_t>(std::llround(
+                        std::max(0.0, clip.duration) * ClipAudioSampleRate));
+                    source->frameCount = std::min(
+                        scheduledFrames,
+                        source->file->getSampleCount() / ClipAudioChannelCount);
+                    next.push_back(std::move(source));
+                }
+
+                {
+                    std::lock_guard lock(m_mutex);
+                    m_sources = std::move(next);
+                    m_durationSeconds = std::max(0.0, sequenceDuration);
+                    m_sequenceFrames = std::max<std::uint64_t>(1, static_cast<std::uint64_t>(
+                        std::ceil(m_durationSeconds * ClipAudioSampleRate)));
+                    m_nextFrame = 0;
+                }
+                return allOpened;
+            }
+
+            void clearSources()
+            {
+                stop();
+                std::lock_guard lock(m_mutex);
+                m_sources.clear();
+                m_mixSamples.clear();
+                m_outputSamples.clear();
+                m_readSamples.clear();
+                m_nextFrame = 0;
+                m_sequenceFrames = 1;
+                m_durationSeconds = 0.0;
+            }
+
+            bool ready() const
+            {
+                std::lock_guard lock(m_mutex);
+                return !m_sources.empty();
+            }
+
+            double durationSeconds() const
+            {
+                std::lock_guard lock(m_mutex);
+                return m_durationSeconds;
+            }
+        };
+
+        std::unique_ptr<Mixer>                     m_mixer;
         std::string                                 m_error;
-        double                                      m_durationSeconds = 0.0;
         bool                                        m_scrubBurstActive = false;
         double                                      m_scrubBurstEndSeconds = 0.0;
         std::chrono::steady_clock::time_point       m_scrubBurstDeadline{};
@@ -77,9 +307,12 @@ namespace weasel
         void seekInternal(double sourceSeconds);
 
     public:
+        Playback();
         ~Playback();
 
-        bool loadWav(const std::filesystem::path& wavPath);
+        bool setClips(const std::vector<Clip>& clips,
+                      double sequenceDuration,
+                      std::filesystem::path& failedPath);
         void clear();
 
         bool ready() const;
@@ -94,52 +327,39 @@ namespace weasel
         void update();
     };
 
+    SequenceAudioController::Playback::Playback()
+        : m_mixer(std::make_unique<Mixer>())
+    {
+    }
+
     SequenceAudioController::Playback::~Playback()
     {
         clear();
     }
 
-    bool SequenceAudioController::Playback::loadWav(const std::filesystem::path& wavPath)
+    bool SequenceAudioController::Playback::setClips(
+        const std::vector<Clip>& clips,
+        double sequenceDuration,
+        std::filesystem::path& failedPath)
     {
-        clear();
+        clearScrubBurst();
+        resetSynchronizationState();
         m_error.clear();
-
-        if (wavPath.empty())
-        {
-            m_error = "No WAV audio cache was supplied.";
-            return false;
-        }
-
-        auto music = std::make_unique<sf::Music>();
-        if (!music->openFromFile(wavPath))
-        {
-            m_error = "Could not open WAV audio cache: " + wavPath.string();
-            return false;
-        }
-
-        music->setLooping(false);
-        m_durationSeconds = std::max(0.0, static_cast<double>(music->getDuration().asSeconds()));
-        m_music = std::move(music);
-        return true;
+        failedPath.clear();
+        return m_mixer->configure(clips, sequenceDuration, failedPath, m_error);
     }
 
     void SequenceAudioController::Playback::clear()
     {
         clearScrubBurst();
         resetSynchronizationState();
-        if (m_music)
-        {
-            m_music->stop();
-            m_music.reset();
-        }
-
-        m_durationSeconds = 0.0;
+        m_mixer->clearSources();
         m_error.clear();
     }
 
     bool SequenceAudioController::Playback::ready() const
     {
-        return static_cast<bool>(m_music);
+        return m_mixer->ready();
     }
 
     const std::string& SequenceAudioController::Playback::error() const
@@ -150,10 +370,7 @@ namespace weasel
     void SequenceAudioController::Playback::stop()
     {
         clearScrubBurst();
-        if (m_music)
-        {
-            m_music->stop();
-        }
+        m_mixer->stop();
         resetSynchronizationState();
     }
 
@@ -161,7 +378,7 @@ namespace weasel
                                                                   double sourceSeconds,
                                                                   bool forceExact)
     {
-        if (!m_music)
+        if (!m_mixer->ready())
         {
             return;
         }
@@ -169,7 +386,7 @@ namespace weasel
         clearScrubBurst();
         const double targetSeconds = clampSourceTime(sourceSeconds);
         const auto now = std::chrono::steady_clock::now();
-        const auto status = m_music->getStatus();
+        const auto status = m_mixer->getStatus();
         const double playingSeconds = playingOffsetSeconds();
         const double driftSeconds = std::abs(playingSeconds - targetSeconds);
         const bool playingStateChanged = !m_hasSynchronizationState
@@ -191,7 +408,7 @@ namespace weasel
         {
             if (status == sf::SoundSource::Status::Playing)
             {
-                m_music->pause();
+                m_mixer->pause();
             }
 
             if (immediateSeek || driftSeconds > PausedSynchronizationToleranceSeconds)
@@ -213,16 +430,17 @@ namespace weasel
             m_lastContinuousCorrectionTime = now;
         }
 
-        if (m_music->getStatus() != sf::SoundSource::Status::Playing)
+        if (m_mixer->getStatus() != sf::SoundSource::Status::Playing)
         {
-            m_music->play();
+            m_mixer->play();
         }
         recordSynchronizationState(true, targetSeconds, now);
     }
 
     void SequenceAudioController::Playback::scrub(double sourceSeconds, double burstSeconds)
     {
-        if (!m_music || m_durationSeconds <= 0.0)
+        const double durationSeconds = m_mixer->durationSeconds();
+        if (!m_mixer->ready() || durationSeconds <= 0.0)
         {
             return;
         }
@@ -234,7 +452,7 @@ namespace weasel
         }
 
         const double startSeconds = clampSourceTime(sourceSeconds);
-        if (startSeconds >= m_durationSeconds)
+        if (startSeconds >= durationSeconds)
         {
             stop();
             return;
@@ -245,13 +463,13 @@ namespace weasel
                                                        MaximumScrubBurstSeconds);
         seekInternal(startSeconds);
         resetSynchronizationState();
-        if (m_music->getStatus() != sf::SoundSource::Status::Playing)
+        if (m_mixer->getStatus() != sf::SoundSource::Status::Playing)
         {
-            m_music->play();
+            m_mixer->play();
         }
 
         m_scrubBurstActive = true;
-        m_scrubBurstEndSeconds = std::min(m_durationSeconds, startSeconds + clampedBurstSeconds);
+        m_scrubBurstEndSeconds = std::min(durationSeconds, startSeconds + clampedBurstSeconds);
         m_scrubBurstDeadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(clampedBurstSeconds));
         m_lastScrubStart = now;
@@ -259,16 +477,16 @@ namespace weasel
 
     void SequenceAudioController::Playback::update()
     {
-        if (!m_scrubBurstActive || !m_music)
+        if (!m_scrubBurstActive || !m_mixer->ready())
         {
             return;
         }
 
         const bool reachedEnd = playingOffsetSeconds() >= m_scrubBurstEndSeconds;
         const bool exceededDeadline = std::chrono::steady_clock::now() >= m_scrubBurstDeadline;
-        if (reachedEnd || exceededDeadline || m_music->getStatus() != sf::SoundSource::Status::Playing)
+        if (reachedEnd || exceededDeadline || m_mixer->getStatus() != sf::SoundSource::Status::Playing)
         {
-            m_music->pause();
+            m_mixer->pause();
             clearScrubBurst();
         }
     }
@@ -280,17 +498,17 @@ namespace weasel
             return 0.0;
         }
 
-        return std::clamp(sourceSeconds, 0.0, m_durationSeconds);
+        return std::clamp(sourceSeconds, 0.0, m_mixer->durationSeconds());
     }
 
     double SequenceAudioController::Playback::playingOffsetSeconds() const
     {
-        if (!m_music)
+        if (!m_mixer->ready())
         {
             return 0.0;
         }
 
-        return std::max(0.0, static_cast<double>(m_music->getPlayingOffset().asSeconds()));
+        return std::max(0.0, static_cast<double>(m_mixer->getPlayingOffset().asSeconds()));
     }
 
     void SequenceAudioController::Playback::clearScrubBurst()
@@ -322,18 +540,18 @@ namespace weasel
 
     void SequenceAudioController::Playback::seekInternal(double sourceSeconds)
     {
-        if (!m_music)
+        if (!m_mixer->ready())
         {
             return;
         }
 
-        if (m_music->getStatus() == sf::SoundSource::Status::Stopped)
+        if (m_mixer->getStatus() == sf::SoundSource::Status::Stopped)
         {
-            m_music->play();
-            m_music->pause();
+            m_mixer->play();
+            m_mixer->pause();
         }
 
-        m_music->setPlayingOffset(sf::seconds(static_cast<float>(clampSourceTime(sourceSeconds))));
+        m_mixer->setPlayingOffset(sf::seconds(static_cast<float>(clampSourceTime(sourceSeconds))));
     }
 
     SequenceAudioController::SequenceAudioController(std::filesystem::path applicationDirectory,
@@ -425,92 +643,109 @@ namespace weasel
             : std::vector<SequenceRenderEntry>{};
         const bool hasAudio = !audioEntries.empty();
         const bool hasCacheDirectory = !m_cacheDirectory.empty();
-        const std::size_t signature = hasAudio
-            ? sequenceAudioSignature(document.duration(), audioEntries)
+        const double sequenceDuration = std::max(0.0, document.duration());
+        const std::size_t layoutSignature = hasAudio
+            ? sequenceAudioLayoutSignature(sequenceDuration, audioEntries)
             : 0;
-        const std::filesystem::path targetCachePath = hasAudio && hasCacheDirectory
-            ? m_cacheDirectory / ("sequence-audio-" + std::to_string(signature) + ".wav")
-            : std::filesystem::path{};
         const auto now = std::chrono::steady_clock::now();
-        if (!m_signatureKnown || signature != m_targetSignature || targetCachePath != m_targetCachePath)
+        if (!m_layoutKnown || layoutSignature != m_layoutSignature)
         {
-            m_signatureKnown = true;
-            m_targetSignature = signature;
-            m_targetCachePath = targetCachePath;
-            m_renderingSignature = 0;
-            m_renderingCachePath.clear();
-            m_renderQueued = hasAudio && hasCacheDirectory;
-            m_renderInFlight = false;
+            m_layoutKnown = true;
+            m_layoutSignature = layoutSignature;
+            m_sequenceDuration = sequenceDuration;
+            m_clipTargets.clear();
+            m_clipTargets.reserve(audioEntries.size());
+            if (hasCacheDirectory)
+            {
+                for (const SequenceRenderEntry& entry : audioEntries)
+                {
+                    const std::size_t signature = clipAudioSignature(entry);
+                    m_clipTargets.push_back({
+                        entry,
+                        m_cacheDirectory / ("clip-audio-" + std::to_string(signature) + ".wav")
+                    });
+                }
+            }
             m_changedAt = now;
             m_error.clear();
 
-            // Never let a cache from a prior edit continue to play. The
-            // renderer owns its own project snapshot, so cancellation plus a
-            // new signature keeps the preview tied to the current timeline.
-            m_playback->clear();
-            if (m_renderer.isRunning())
+            const bool activeRenderStillNeeded = m_renderInFlight
+                && std::any_of(m_clipTargets.begin(), m_clipTargets.end(), [this](const ClipCacheTarget& target)
+                {
+                    return target.cachePath.lexically_normal() == m_renderingCachePath.lexically_normal();
+                });
+            if (m_renderInFlight && !activeRenderStillNeeded)
             {
                 m_renderer.cancel();
             }
+
+            // Reconfigure immediately from the files that still match. A
+            // ripple edit generally reaches this path with every file ready,
+            // so it only changes scheduling and performs no FFmpeg work.
+            (void)refreshPlayback();
+            const bool hasMissingClip = std::any_of(
+                m_clipTargets.begin(), m_clipTargets.end(), [](const ClipCacheTarget& target)
+                {
+                    return !UsableAudioCache(target.cachePath);
+                });
+            m_renderQueued = hasMissingClip && !m_renderInFlight;
+            pruneClipAudioCache();
         }
 
         const SequenceAudioRenderStatus renderStatus = m_renderer.status();
         if (m_renderInFlight && renderStatus.state != SequenceAudioRenderState::Rendering)
         {
-            const bool currentResult = m_renderingSignature == m_targetSignature
-                && m_renderingCachePath == m_targetCachePath
-                && renderStatus.outputPath.lexically_normal() == m_targetCachePath.lexically_normal();
+            const std::filesystem::path completedPath = m_renderingCachePath;
+            const bool resultStillNeeded = std::any_of(
+                m_clipTargets.begin(), m_clipTargets.end(), [&completedPath](const ClipCacheTarget& target)
+                {
+                    return target.cachePath.lexically_normal() == completedPath.lexically_normal();
+                });
+            const bool currentResult = resultStillNeeded
+                && renderStatus.outputPath.lexically_normal() == completedPath.lexically_normal();
             m_renderInFlight = false;
             m_renderingCachePath.clear();
             if (currentResult && renderStatus.state == SequenceAudioRenderState::Succeeded)
             {
-                if (m_playback->loadWav(renderStatus.outputPath))
-                {
-                    m_error.clear();
-                    pruneSequenceAudioCache(renderStatus.outputPath);
-                }
-                else
-                {
-                    m_error = m_playback->error();
-                }
+                (void)refreshPlayback();
             }
             else if (currentResult && renderStatus.state == SequenceAudioRenderState::Failed)
             {
                 m_error = renderStatus.message;
             }
+            const bool hasMissingClip = std::any_of(
+                m_clipTargets.begin(), m_clipTargets.end(), [](const ClipCacheTarget& target)
+                {
+                    return !UsableAudioCache(target.cachePath);
+                });
+            const bool failedCurrentRender = currentResult
+                && renderStatus.state == SequenceAudioRenderState::Failed;
+            m_renderQueued = hasMissingClip && !failedCurrentRender;
+            pruneClipAudioCache();
         }
 
         if (hasAudio && hasCacheDirectory && m_renderQueued && !m_renderInFlight
             && !m_renderer.isRunning() && now - m_changedAt >= RenderDebounce)
         {
-            const std::filesystem::path& cachePath = m_targetCachePath;
-            std::error_code cacheError;
-            const bool usableCachedAudio = std::filesystem::is_regular_file(cachePath, cacheError)
-                && !cacheError && std::filesystem::file_size(cachePath, cacheError) > 44 && !cacheError;
-            if (usableCachedAudio)
+            const auto missing = std::find_if(
+                m_clipTargets.begin(), m_clipTargets.end(), [](const ClipCacheTarget& target)
+                {
+                    return !UsableAudioCache(target.cachePath);
+                });
+            if (missing == m_clipTargets.end())
             {
-                if (m_playback->loadWav(cachePath))
-                {
-                    m_error.clear();
-                    m_renderQueued = false;
-                    pruneSequenceAudioCache(cachePath);
-                }
-                else
-                {
-                    // An interrupted or incompatible cache should not prevent
-                    // a fresh FFmpeg mix from being generated for this edit.
-                    std::error_code removeError;
-                    std::filesystem::remove(cachePath, removeError);
-                }
+                (void)refreshPlayback();
+                m_renderQueued = false;
             }
-
-            if (m_renderQueued)
+            else
             {
                 std::string startError;
-                if (m_renderer.start(document, audioEntries, ffmpegPath(), cachePath, startError))
+                if (m_renderer.start(missing->entry,
+                                     ffmpegPath(),
+                                     missing->cachePath,
+                                     startError))
                 {
-                    m_renderingSignature = m_targetSignature;
-                    m_renderingCachePath = cachePath;
+                    m_renderingCachePath = missing->cachePath;
                     m_renderInFlight = true;
                     m_renderQueued = false;
                 }
@@ -570,7 +805,7 @@ namespace weasel
     {
         m_lastScrubAudioFrameIndex = -1;
         m_playback->stop();
-        m_signatureKnown = false;
+        m_layoutKnown = false;
     }
 
     void SequenceAudioController::stopPlayback()
@@ -585,13 +820,14 @@ namespace weasel
         m_playback->clear();
         m_renderer.cancel();
         clearWaveforms();
-        m_signatureKnown = false;
+        m_layoutKnown = false;
         m_renderQueued = false;
         m_renderInFlight = false;
-        m_targetSignature = 0;
-        m_renderingSignature = 0;
-        m_targetCachePath.clear();
+        m_allClipsReady = false;
+        m_layoutSignature = 0;
+        m_clipTargets.clear();
         m_renderingCachePath.clear();
+        m_sequenceDuration = 0.0;
         m_changedAt = {};
         m_error.clear();
     }
@@ -613,7 +849,7 @@ namespace weasel
 
     bool SequenceAudioController::ready() const
     {
-        return m_playback->ready();
+        return m_allClipsReady;
     }
 
     const std::string& SequenceAudioController::error() const noexcept
@@ -624,6 +860,52 @@ namespace weasel
     std::filesystem::path SequenceAudioController::ffmpegPath() const
     {
         return FindMediaTool(m_applicationDirectory, "ffmpeg");
+    }
+
+    bool SequenceAudioController::refreshPlayback()
+    {
+        std::vector<Playback::Clip> playableClips;
+        playableClips.reserve(m_clipTargets.size());
+        bool allCachesUsable = !m_clipTargets.empty();
+        for (const ClipCacheTarget& target : m_clipTargets)
+        {
+            if (!UsableAudioCache(target.cachePath))
+            {
+                allCachesUsable = false;
+                continue;
+            }
+            playableClips.push_back({
+                target.entry.clip.id,
+                target.cachePath,
+                target.entry.clip.timelineStart,
+                target.entry.clip.duration()
+            });
+        }
+
+        std::filesystem::path failedPath;
+        const bool openedAllPlayableClips = m_playback->setClips(
+            playableClips, m_sequenceDuration, failedPath);
+        if (!openedAllPlayableClips)
+        {
+            allCachesUsable = false;
+            m_error = m_playback->error();
+
+            // Size alone cannot identify a truncated or incompatible WAV.
+            // Drop the exact file that SFML rejected so the normal missing-
+            // clip path regenerates it on the next pass.
+            if (!failedPath.empty())
+            {
+                std::error_code removeError;
+                std::filesystem::remove(failedPath, removeError);
+            }
+        }
+        else
+        {
+            m_error.clear();
+        }
+
+        m_allClipsReady = allCachesUsable && openedAllPlayableClips;
+        return m_allClipsReady;
     }
 
     bool SequenceAudioController::requestWaveform(const ProjectData& document, int assetId)
@@ -685,7 +967,70 @@ namespace weasel
         m_waveforms.clear();
     }
 
-    std::size_t SequenceAudioController::sequenceAudioSignature(
+    std::size_t SequenceAudioController::clipAudioSignature(
+        const SequenceRenderEntry& audioEntry)
+    {
+        std::size_t signature = 0;
+        const auto combine = [&signature](std::size_t value)
+        {
+            signature ^= value + 0x9e3779b9U + (signature << 6U) + (signature >> 2U);
+        };
+        const auto roundedMicroseconds = [](double value)
+        {
+            return static_cast<long long>(std::llround(value * 1000000.0));
+        };
+
+        const TimelineClip& clip = audioEntry.clip;
+        const MediaAsset& asset = audioEntry.asset;
+        combine(std::hash<std::size_t>{}(ClipAudioCacheFormatVersion));
+        combine(std::hash<std::string>{}(asset.path.lexically_normal().string()));
+        combine(std::hash<long long>{}(roundedMicroseconds(clip.sourceIn)));
+        combine(std::hash<long long>{}(roundedMicroseconds(clip.sourceOut)));
+        combine(std::hash<long long>{}(roundedMicroseconds(clip.playbackSpeed())));
+
+        // Disabled effect values are intentionally excluded: changing an
+        // inert control must not invalidate otherwise identical audio.
+        combine(std::hash<bool>{}(clip.audio.gainEnabled));
+        if (clip.audio.gainEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.gainDb)));
+        }
+        combine(std::hash<bool>{}(clip.audio.panEnabled));
+        if (clip.audio.panEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.pan)));
+        }
+        combine(std::hash<bool>{}(clip.audio.fadeEnabled));
+        if (clip.audio.fadeEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.fadeIn)));
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.fadeOut)));
+        }
+        combine(std::hash<bool>{}(clip.audio.lowPassEnabled));
+        if (clip.audio.lowPassEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.lowPassHz)));
+        }
+        combine(std::hash<bool>{}(clip.audio.highPassEnabled));
+        if (clip.audio.highPassEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.highPassHz)));
+        }
+        combine(std::hash<bool>{}(clip.audio.echoEnabled));
+        if (clip.audio.echoEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.echoDelayMs)));
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.echoDecay)));
+        }
+        combine(std::hash<bool>{}(clip.audio.reverbEnabled));
+        if (clip.audio.reverbEnabled)
+        {
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.audio.reverbMix)));
+        }
+        return signature;
+    }
+
+    std::size_t SequenceAudioController::sequenceAudioLayoutSignature(
         double sequenceDuration,
         const std::vector<SequenceRenderEntry>& audioEntries)
     {
@@ -694,48 +1039,41 @@ namespace weasel
         {
             signature ^= value + 0x9e3779b9U + (signature << 6U) + (signature >> 2U);
         };
-        const auto roundedMilliseconds = [](double value)
+        const auto roundedMicroseconds = [](double value)
         {
-            return static_cast<long long>(std::llround(value * 1000.0));
+            return static_cast<long long>(std::llround(value * 1000000.0));
         };
 
-        combine(std::hash<long long>{}(roundedMilliseconds(sequenceDuration)));
+        combine(std::hash<long long>{}(roundedMicroseconds(sequenceDuration)));
         for (const SequenceRenderEntry& entry : audioEntries)
         {
             const TimelineClip& clip = entry.clip;
-            const MediaAsset& asset = entry.asset;
             combine(std::hash<int>{}(clip.id));
-            combine(std::hash<int>{}(asset.id));
-            combine(std::hash<std::string>{}(asset.path.lexically_normal().string()));
-            combine(std::hash<long long>{}(roundedMilliseconds(clip.timelineStart)));
-            combine(std::hash<long long>{}(roundedMilliseconds(clip.sourceIn)));
-            combine(std::hash<long long>{}(roundedMilliseconds(clip.sourceOut)));
-            combine(std::hash<long long>{}(static_cast<long long>(
-                std::llround(clip.playbackSpeed() * 100000.0))));
-            combine(std::hash<bool>{}(clip.audio.gainEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.gainDb * 1000.0))));
-            combine(std::hash<bool>{}(clip.audio.panEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.pan * 100000.0))));
-            combine(std::hash<bool>{}(clip.audio.fadeEnabled));
-            combine(std::hash<long long>{}(roundedMilliseconds(clip.audio.fadeIn)));
-            combine(std::hash<long long>{}(roundedMilliseconds(clip.audio.fadeOut)));
-            combine(std::hash<bool>{}(clip.audio.lowPassEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.lowPassHz))));
-            combine(std::hash<bool>{}(clip.audio.highPassEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.highPassHz))));
-            combine(std::hash<bool>{}(clip.audio.echoEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.echoDelayMs))));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.echoDecay * 100000.0))));
-            combine(std::hash<bool>{}(clip.audio.reverbEnabled));
-            combine(std::hash<long long>{}(static_cast<long long>(std::llround(clip.audio.reverbMix * 100000.0))));
+            combine(std::hash<long long>{}(roundedMicroseconds(clip.timelineStart)));
+            combine(clipAudioSignature(entry));
         }
         return signature;
     }
 
-    void SequenceAudioController::pruneSequenceAudioCache(const std::filesystem::path& keepPath) const
+    void SequenceAudioController::pruneClipAudioCache() const
     {
+        if (m_cacheDirectory.empty())
+        {
+            return;
+        }
+
+        std::unordered_set<std::string> keepPaths;
+        for (const ClipCacheTarget& target : m_clipTargets)
+        {
+            keepPaths.insert(target.cachePath.lexically_normal().string());
+        }
+        if (!m_renderingCachePath.empty())
+        {
+            keepPaths.insert(m_renderingCachePath.lexically_normal().string());
+        }
+
         std::error_code error;
-        std::filesystem::directory_iterator iterator(keepPath.parent_path(), error);
+        std::filesystem::directory_iterator iterator(m_cacheDirectory, error);
         const std::filesystem::directory_iterator end;
         while (!error && iterator != end)
         {
@@ -748,8 +1086,13 @@ namespace weasel
                 continue;
             }
             const std::string filename = entry.path().filename().string();
-            if (!IsFinalSequenceAudioCacheFilename(filename)
-                || entry.path().lexically_normal() == keepPath.lexically_normal())
+            if (!IsClipAudioCacheFilename(filename)
+                && !IsLegacySequenceAudioCacheFilename(filename))
+            {
+                continue;
+            }
+            if (IsClipAudioCacheFilename(filename)
+                && keepPaths.contains(entry.path().lexically_normal().string()))
             {
                 continue;
             }

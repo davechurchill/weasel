@@ -309,14 +309,14 @@ namespace
             const double sourceEnd = sourceTimeAt(relativeEnd);
             const double firstSourceTime = std::min(sourceStart, sourceEnd);
             const double lastSourceTime = std::max(sourceStart, sourceEnd);
+            const double secondsPerPeak = std::max(0.000001, waveform.secondsPerPeak);
             const std::size_t firstPeak = std::min(peakCount - 1, static_cast<std::size_t>(std::floor(
-                std::clamp(firstSourceTime / waveform.durationSeconds, 0.0, 1.0) * static_cast<double>(peakCount))));
+                std::max(0.0, firstSourceTime) / secondsPerPeak)));
             // Source ranges are end-exclusive.  Using ceil(end) directly
             // with an inclusive loop below reads one future cache bucket,
             // making transients appear early.  Subtract one after ceil so
             // the final bucket is the one that actually intersects x0..x1.
-            const double finalPeakPosition = std::clamp(lastSourceTime / waveform.durationSeconds, 0.0, 1.0)
-                * static_cast<double>(peakCount);
+            const double finalPeakPosition = std::max(0.0, lastSourceTime) / secondsPerPeak;
             const std::size_t lastPeak = std::min(peakCount - 1, static_cast<std::size_t>(std::max(
                 0.0, std::ceil(finalPeakPosition) - 1.0)));
 

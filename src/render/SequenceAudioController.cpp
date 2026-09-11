@@ -759,7 +759,7 @@ namespace weasel
 
         if (m_drawAudioWaveforms)
         {
-            (void)requestWaveforms(audioEntries);
+            (void)requestSequenceWaveforms(document);
         }
 
         if (!m_playbackAudioEnabled || !hasAudio)
@@ -911,55 +911,93 @@ namespace weasel
     bool SequenceAudioController::requestWaveform(const ProjectData& document, int assetId)
     {
         const MediaAsset* asset = document.findAsset(assetId);
-        return asset ? requestWaveform(*asset) : false;
+        if (!asset)
+        {
+            return false;
+        }
+
+        std::vector<AudioWaveformRange> sourceRanges;
+        for (const TimelineTrack& track : document.sequence().tracks)
+        {
+            if (track.type != TimelineTrackType::Audio)
+            {
+                continue;
+            }
+            for (const TimelineClip& clip : track.clips)
+            {
+                if (clip.assetId == assetId && clip.sourceOut > clip.sourceIn)
+                {
+                    sourceRanges.push_back({ clip.sourceIn, clip.sourceOut });
+                }
+            }
+        }
+        return requestWaveform(*asset, sourceRanges);
     }
 
-    bool SequenceAudioController::requestWaveform(const MediaAsset& asset)
+    bool SequenceAudioController::requestWaveform(
+        const MediaAsset& asset,
+        const std::vector<AudioWaveformRange>& sourceRanges)
     {
         if (!m_drawAudioWaveforms || asset.id <= 0 || m_cacheDirectory.empty()
-            || !asset.hasAudio || asset.duration <= 0.0)
+            || !asset.hasAudio || asset.duration <= 0.0 || sourceRanges.empty())
         {
             return false;
         }
         return m_waveforms.request(asset.id,
                                    asset.path,
                                    asset.duration,
+                                   sourceRanges,
                                    ffmpegPath(),
                                    m_cacheDirectory);
     }
 
     std::vector<int> SequenceAudioController::requestSequenceWaveforms(const ProjectData& document)
     {
-        SequenceRenderPlan plan;
-        SequenceRenderPlanOptions options;
-        options.validateMediaFiles = false;
-        std::string ignoredError;
-        if (!SequenceRenderPlan::build(document, plan, ignoredError, options))
+        struct AssetRequest
         {
-            return {};
+            MediaAsset                      asset;
+            std::vector<AudioWaveformRange> sourceRanges;
+        };
+
+        std::vector<int> assetIds;
+        std::vector<AssetRequest> requests;
+        std::unordered_map<int, std::size_t> requestIndices;
+        for (const TimelineTrack& track : document.sequence().tracks)
+        {
+            if (track.type != TimelineTrackType::Audio)
+            {
+                continue;
+            }
+            for (const TimelineClip& clip : track.clips)
+            {
+                const MediaAsset* asset = document.findAsset(clip.assetId);
+                if (!asset || !asset->hasAudio || clip.sourceOut <= clip.sourceIn)
+                {
+                    continue;
+                }
+
+                const auto [found, inserted] = requestIndices.emplace(
+                    asset->id, requests.size());
+                if (inserted)
+                {
+                    assetIds.push_back(asset->id);
+                    requests.push_back({ *asset, {} });
+                }
+                requests[found->second].sourceRanges.push_back({
+                    clip.sourceIn, clip.sourceOut
+                });
+            }
         }
-        return requestWaveforms(plan.audioEntries());
+        for (const AssetRequest& request : requests)
+        {
+            (void)requestWaveform(request.asset, request.sourceRanges);
+        }
+        return assetIds;
     }
 
     AudioWaveformSnapshot SequenceAudioController::waveformSnapshot(int assetId) const
     {
         return m_waveforms.snapshot(assetId);
-    }
-
-    std::vector<int> SequenceAudioController::requestWaveforms(
-        const std::vector<SequenceRenderEntry>& audioEntries)
-    {
-        std::vector<int> assetIds;
-        std::unordered_set<int> seenAssetIds;
-        for (const SequenceRenderEntry& entry : audioEntries)
-        {
-            if (seenAssetIds.insert(entry.asset.id).second)
-            {
-                assetIds.push_back(entry.asset.id);
-                (void)requestWaveform(entry.asset);
-            }
-        }
-        return assetIds;
     }
 
     void SequenceAudioController::clearWaveforms()

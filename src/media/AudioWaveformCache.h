@@ -25,6 +25,14 @@ namespace weasel
         float maximum = 0.0f;
     };
 
+    struct AudioWaveformRange
+    {
+        double sourceIn = 0.0;
+        double sourceOut = 0.0;
+
+        bool operator==(const AudioWaveformRange&) const = default;
+    };
+
     // Immutable once it has been published by AudioWaveformCache. A timeline
     // clip maps its source in/out range across these uniformly spaced peaks.
     // Each peak level combines pairs from the level before it so drawing can
@@ -32,6 +40,7 @@ namespace weasel
     struct AudioWaveform
     {
         double                                          durationSeconds = 0.0;
+        double                                          secondsPerPeak = 1.0 / 8.0;
         std::vector<AudioWaveformPeak>                  peaks;
         std::vector<std::vector<AudioWaveformPeak>>     peakLevels;
     };
@@ -53,7 +62,7 @@ namespace weasel
         std::string                          error;
         std::uint64_t                        generation = 0;
         std::size_t                          peakCount = 0;
-        // While Generating, this is the decoded portion of the source audio.
+        // While Generating, this is the completed portion of requested tiles.
         // It remains zero for queued/failed work and reaches one when Ready.
         float                                progress = 0.0f;
         // Set only while a worker is actively decoding this waveform. The UI
@@ -67,9 +76,9 @@ namespace weasel
         std::shared_ptr<const AudioWaveform> waveform;
     };
 
-    // A single-worker, non-blocking cache for source-media waveforms. It
-    // invokes FFmpeg to decode a mono 8 kHz PCM stream, reducing the samples
-    // as they arrive so long source clips do not need to be held in memory.
+    // A single-worker, non-blocking cache for source-media waveforms. Source-
+    // time tiles survive timeline moves and ripple edits. FFmpeg reduces each
+    // requested range to min/max metadata, so raw PCM never crosses the pipe.
     // All public functions are thread-safe. The returned waveform is
     // immutable and remains valid independently of future cache requests.
     class AudioWaveformCache
@@ -99,29 +108,25 @@ namespace weasel
         void publishReady(const Request& request, std::shared_ptr<const AudioWaveform> waveform);
 
     public:
-        // A zero target selects the default time-based resolution: one peak
-        // envelope for every 1/8th second of source audio.
-        static constexpr std::size_t DefaultPeakCount = 0;
-
         AudioWaveformCache() = default;
         ~AudioWaveformCache();
 
         AudioWaveformCache(const AudioWaveformCache&) = delete;
         AudioWaveformCache& operator=(const AudioWaveformCache&) = delete;
 
-        // Queues waveform extraction for one media asset. Calling this again
-        // with the same request is a no-op while the existing waveform is
-        // queued, being generated, or ready. A changed request replaces the
-        // old one. Invalid input is reported through status(assetId).
+        // Queues the source-time tiles intersecting sourceRanges. Calling this
+        // again with the same tile set is a no-op. Extending or trimming a
+        // range reuses every tile already stored on disk.
         bool request(int assetId,
-                                   const std::filesystem::path& mediaPath,
-                                   double durationSeconds,
-                                   const std::filesystem::path& ffmpegPath,
-                                   const std::filesystem::path& cacheDirectory,
-                                   std::size_t targetPeakCount = DefaultPeakCount);
+                     const std::filesystem::path& mediaPath,
+                     double durationSeconds,
+                     const std::vector<AudioWaveformRange>& sourceRanges,
+                     const std::filesystem::path& ffmpegPath,
+                     const std::filesystem::path& cacheDirectory);
 
         // Reads the latest status and immutable waveform without blocking on
-        // FFmpeg. A non-null waveform is supplied only after Ready.
+        // FFmpeg. While an expanded tile request is running, waveform may
+        // retain the last complete result for that source asset.
         AudioWaveformSnapshot snapshot(int assetId) const;
 
         // Cancels all outstanding work and removes cached data.

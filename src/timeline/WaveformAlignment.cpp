@@ -111,8 +111,8 @@ namespace
             const double sourceTime = std::min(sourceEnd - 0.000001,
                 sourceStart + (static_cast<double>(index) + 0.5) * AudioAlignmentBinSeconds);
             const std::size_t peakIndex = std::min(waveform.peaks.size() - 1,
-                static_cast<std::size_t>(std::floor(std::clamp(sourceTime / waveform.durationSeconds, 0.0, 1.0)
-                                                     * static_cast<double>(waveform.peaks.size()))));
+                static_cast<std::size_t>(std::floor(std::max(0.0, sourceTime)
+                                                     / AudioAlignmentBinSeconds)));
             const weasel::AudioWaveformPeak& peak = waveform.peaks[peakIndex];
             const double amplitude = std::max(std::abs(static_cast<double>(peak.minimum)),
                                               std::abs(static_cast<double>(peak.maximum)));

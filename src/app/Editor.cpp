@@ -2832,6 +2832,12 @@ namespace weasel
             return;
         }
 
+        // Alignment can be requested for clips on disabled tracks. Expand the
+        // source-tile request before inspecting readiness so a previously
+        // completed waveform for a smaller range is not mistaken for complete
+        // coverage of these two clips.
+        (void)m_sequenceAudioController.requestWaveform(m_editorState.project(), anchorAsset->id);
+        (void)m_sequenceAudioController.requestWaveform(m_editorState.project(), movingAsset->id);
         AudioWaveformSnapshot anchorSnapshot = m_sequenceAudioController.waveformSnapshot(anchorAsset->id);
         AudioWaveformSnapshot movingSnapshot = m_sequenceAudioController.waveformSnapshot(movingAsset->id);
         const auto queueMissingWaveform = [this](const MediaAsset& asset, const AudioWaveformSnapshot& snapshot)

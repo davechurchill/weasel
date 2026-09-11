@@ -14,9 +14,12 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <locale>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -25,14 +28,16 @@
 
 namespace
 {
-    constexpr int WaveformSampleRate = 8000;
     constexpr double WaveformSecondsPerPeak = 1.0 / 8.0;
+    constexpr double WaveformTileSeconds = 60.0;
+    constexpr std::size_t WaveformPeaksPerTile = 480;
+    constexpr std::size_t WaveformBatchTileCount = 10;
     constexpr std::size_t MinimumPeakCount = 1;
-    // At the requested resolution this still covers more than 18 hours of
-    // source audio while retaining a modest per-waveform memory footprint.
-    constexpr std::size_t MaximumPeakCount = 524288;
+    // At the requested resolution this covers more than 72 hours of source
+    // audio. The cap still guards corrupt duration metadata from huge allocs.
+    constexpr std::size_t MaximumPeakCount = 2097152;
     constexpr std::array<char, 8> WaveformCacheMagic = { 'V', 'I', 'D', 'W', 'A', 'V', 'E', '1' };
-    constexpr std::uint32_t WaveformCacheVersion = 1;
+    constexpr std::uint32_t WaveformCacheVersion = 2;
     constexpr double WaveformCacheDurationTolerance = 0.01;
 
     std::filesystem::path NormalizedPath(const std::filesystem::path& path)
@@ -40,6 +45,20 @@ namespace
         std::error_code error;
         const std::filesystem::path absolute = std::filesystem::absolute(path, error);
         return error ? path.lexically_normal() : absolute.lexically_normal();
+    }
+
+    std::string Number(double value)
+    {
+        std::ostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << std::fixed << std::setprecision(6) << value;
+        std::string result = stream.str();
+        result.erase(result.find_last_not_of('0') + 1);
+        if (!result.empty() && result.back() == '.')
+        {
+            result.pop_back();
+        }
+        return result.empty() ? "0" : result;
     }
 
     std::size_t DefaultPeakCountForDuration(double durationSeconds)
@@ -55,15 +74,6 @@ namespace
             return MaximumPeakCount;
         }
         return std::clamp(static_cast<std::size_t>(desiredPeakCount), MinimumPeakCount, MaximumPeakCount);
-    }
-
-    std::size_t ClampPeakCount(std::size_t targetPeakCount, double durationSeconds)
-    {
-        if (targetPeakCount == weasel::AudioWaveformCache::DefaultPeakCount)
-        {
-            return DefaultPeakCountForDuration(durationSeconds);
-        }
-        return std::clamp(targetPeakCount, MinimumPeakCount, MaximumPeakCount);
     }
 
     void BuildPeakLevels(weasel::AudioWaveform& waveform)
@@ -115,16 +125,10 @@ namespace
         HashBytes(hash, &value, sizeof(value));
     }
 
-    std::filesystem::path WaveformCachePath(const std::filesystem::path& cacheDirectory,
-                                            const std::filesystem::path& mediaPath,
-                                            double durationSeconds,
-                                            std::size_t targetPeakCount)
+    std::uint64_t WaveformCacheKey(const std::filesystem::path& mediaPath,
+                                   double durationSeconds,
+                                   std::size_t peakCount)
     {
-        if (cacheDirectory.empty())
-        {
-            return {};
-        }
-
         std::uint64_t hash = 0;
         const std::filesystem::path::string_type mediaName = mediaPath.native();
         HashBytes(hash, mediaName.data(), mediaName.size() * sizeof(std::filesystem::path::value_type));
@@ -142,12 +146,91 @@ namespace
         const std::int64_t durationMicroseconds = static_cast<std::int64_t>(
             std::llround(std::max(0.0, durationSeconds) * 1000000.0));
         HashValue(hash, durationMicroseconds);
-        HashValue(hash, static_cast<std::uint64_t>(targetPeakCount));
+        HashValue(hash, static_cast<std::uint64_t>(peakCount));
         HashValue(hash, WaveformCacheVersion);
+        return hash;
+    }
 
+    std::filesystem::path WaveformTileCachePath(const std::filesystem::path& cacheDirectory,
+                                                std::uint64_t cacheKey,
+                                                std::size_t tileIndex)
+    {
+        if (cacheDirectory.empty())
+        {
+            return {};
+        }
         std::ostringstream filename;
-        filename << "waveform-" << std::hex << std::setfill('0') << std::setw(16) << hash << ".bin";
+        filename << "waveform-" << std::hex << std::setfill('0') << std::setw(16) << cacheKey
+                 << "-tile-" << std::setw(8) << tileIndex << ".bin";
         return cacheDirectory / filename.str();
+    }
+
+    std::vector<std::size_t> RequestedTileIndices(
+        const std::vector<weasel::AudioWaveformRange>& sourceRanges,
+        double durationSeconds)
+    {
+        std::vector<std::size_t> result;
+        if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
+        {
+            return result;
+        }
+
+        const std::size_t tileCount = std::max<std::size_t>(1, static_cast<std::size_t>(
+            std::ceil(durationSeconds / WaveformTileSeconds)));
+        for (const weasel::AudioWaveformRange& range : sourceRanges)
+        {
+            if (!std::isfinite(range.sourceIn) || !std::isfinite(range.sourceOut))
+            {
+                continue;
+            }
+            const double sourceIn = std::clamp(range.sourceIn, 0.0, durationSeconds);
+            const double sourceOut = std::clamp(range.sourceOut, sourceIn, durationSeconds);
+            if (sourceOut <= sourceIn)
+            {
+                continue;
+            }
+
+            const std::size_t firstTile = std::min(tileCount - 1, static_cast<std::size_t>(
+                std::floor(sourceIn / WaveformTileSeconds)));
+            const std::size_t lastTile = std::min(tileCount - 1, static_cast<std::size_t>(
+                std::max(0.0, std::ceil(sourceOut / WaveformTileSeconds) - 1.0)));
+            for (std::size_t tile = firstTile; tile <= lastTile; ++tile)
+            {
+                result.push_back(tile);
+            }
+        }
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
+    struct WaveformTile
+    {
+        std::size_t           index = 0;
+        std::size_t           firstPeak = 0;
+        std::size_t           peakCount = 0;
+        double                sourceStart = 0.0;
+        double                durationSeconds = 0.0;
+        std::filesystem::path cachePath;
+    };
+
+    WaveformTile MakeWaveformTile(std::size_t tileIndex,
+                                  std::size_t totalPeakCount,
+                                  double sourceDuration,
+                                  const std::filesystem::path& cacheDirectory,
+                                  std::uint64_t cacheKey)
+    {
+        WaveformTile tile;
+        tile.index = tileIndex;
+        tile.firstPeak = tileIndex * WaveformPeaksPerTile;
+        tile.peakCount = tile.firstPeak < totalPeakCount
+            ? std::min(WaveformPeaksPerTile, totalPeakCount - tile.firstPeak)
+            : 0;
+        tile.sourceStart = static_cast<double>(tileIndex) * WaveformTileSeconds;
+        tile.durationSeconds = std::max(0.0, std::min(
+            WaveformTileSeconds, sourceDuration - tile.sourceStart));
+        tile.cachePath = WaveformTileCachePath(cacheDirectory, cacheKey, tileIndex);
+        return tile;
     }
 
     bool ReadExact(std::ifstream& stream, void* destination, std::size_t byteCount)
@@ -275,80 +358,99 @@ namespace
         return true;
     }
 
-    class PeakAccumulator
+    class PeakMetadataParser
     {
     private:
-        double                                      m_durationSeconds = 0.0;
-        double                                      m_expectedSamples = 1.0;
-        std::vector<weasel::AudioWaveformPeak>      m_peaks;
-        std::uint64_t                               m_sampleCount = 0;
-        bool                                        m_hasPendingByte = false;
-        unsigned char                               m_pendingByte = 0;
+        static constexpr std::string_view MinimumPrefix = "lavfi.astats.Overall.Min_level=";
+        static constexpr std::string_view MaximumPrefix = "lavfi.astats.Overall.Max_level=";
 
-        void consumeSample(unsigned char lowByte, unsigned char highByte)
+        std::string                            m_pendingText;
+        std::vector<weasel::AudioWaveformPeak> m_peaks;
+        bool                                   m_hasMinimum = false;
+        bool                                   m_hasMaximum = false;
+        double                                 m_minimum = 0.0;
+        double                                 m_maximum = 0.0;
+
+        static bool parseValue(std::string_view text, double& value)
         {
-            const std::uint16_t packed = static_cast<std::uint16_t>(lowByte)
-                | (static_cast<std::uint16_t>(highByte) << 8u);
-            const std::int16_t source = static_cast<std::int16_t>(packed);
-            const float value = static_cast<float>(source) / 32768.0f;
-            const double fraction = static_cast<double>(m_sampleCount) / m_expectedSamples;
-            const std::size_t index = std::min(m_peaks.size() - 1,
-                                               static_cast<std::size_t>(std::floor(fraction * m_peaks.size())));
-            weasel::AudioWaveformPeak& peak = m_peaks[index];
-            peak.minimum = std::min(peak.minimum, value);
-            peak.maximum = std::max(peak.maximum, value);
-            ++m_sampleCount;
+            const std::string terminated(text);
+            char* end = nullptr;
+            value = std::strtod(terminated.c_str(), &end);
+            return end && end != terminated.c_str() && std::isfinite(value);
+        }
+
+        void commitPeak()
+        {
+            if (!m_hasMinimum || !m_hasMaximum)
+            {
+                return;
+            }
+            const float minimum = static_cast<float>(std::clamp(m_minimum / 32768.0, -1.0, 1.0));
+            const float maximum = static_cast<float>(std::clamp(m_maximum / 32768.0, -1.0, 1.0));
+            m_peaks.push_back({ std::min(0.0f, minimum), std::max(0.0f, maximum) });
+            m_hasMinimum = false;
+            m_hasMaximum = false;
+        }
+
+        void consumeLine(std::string_view line)
+        {
+            if (line.starts_with("frame:"))
+            {
+                commitPeak();
+                m_hasMinimum = false;
+                m_hasMaximum = false;
+                return;
+            }
+            if (line.starts_with(MinimumPrefix))
+            {
+                m_hasMinimum = parseValue(line.substr(MinimumPrefix.size()), m_minimum);
+            }
+            else if (line.starts_with(MaximumPrefix))
+            {
+                m_hasMaximum = parseValue(line.substr(MaximumPrefix.size()), m_maximum);
+            }
+            commitPeak();
         }
 
     public:
-        PeakAccumulator(double durationSeconds, std::size_t peakCount)
-            : m_durationSeconds(std::max(0.0, durationSeconds))
-            , m_expectedSamples(std::max(1.0, m_durationSeconds * static_cast<double>(WaveformSampleRate)))
-            , m_peaks(peakCount)
+        void append(std::string_view text)
         {
-        }
-
-        void append(const char* bytes, std::size_t size)
-        {
-            std::size_t position = 0;
-            if (m_hasPendingByte && size > 0)
+            m_pendingText.append(text.data(), text.size());
+            std::size_t consumed = 0;
+            for (;;)
             {
-                consumeSample(m_pendingByte, static_cast<unsigned char>(bytes[0]));
-                m_hasPendingByte = false;
-                position = 1;
+                const std::size_t lineEnd = m_pendingText.find('\n', consumed);
+                if (lineEnd == std::string::npos)
+                {
+                    break;
+                }
+                std::string_view line(m_pendingText.data() + consumed, lineEnd - consumed);
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line.remove_suffix(1);
+                }
+                consumeLine(line);
+                consumed = lineEnd + 1;
             }
-
-            while (position + 1 < size)
+            if (consumed > 0)
             {
-                consumeSample(static_cast<unsigned char>(bytes[position]),
-                              static_cast<unsigned char>(bytes[position + 1]));
-                position += 2;
-            }
-
-            if (position < size)
-            {
-                m_pendingByte = static_cast<unsigned char>(bytes[position]);
-                m_hasPendingByte = true;
+                m_pendingText.erase(0, consumed);
             }
         }
 
-        std::shared_ptr<const weasel::AudioWaveform> finish() const
+        void finish()
         {
-            auto waveform = std::make_shared<weasel::AudioWaveform>();
-            waveform->durationSeconds = m_durationSeconds;
-            waveform->peaks = m_peaks;
-            BuildPeakLevels(*waveform);
-            return waveform;
+            if (!m_pendingText.empty())
+            {
+                consumeLine(m_pendingText);
+                m_pendingText.clear();
+            }
+            commitPeak();
         }
 
-        std::uint64_t sampleCount() const
+        const std::vector<weasel::AudioWaveformPeak>& peaks() const noexcept
         {
-            return m_sampleCount;
-        }
-
-        float progress() const
-        {
-            return std::clamp(static_cast<float>(static_cast<double>(m_sampleCount) / m_expectedSamples), 0.0f, 1.0f);
+            return m_peaks;
         }
     };
 }
@@ -360,9 +462,11 @@ namespace weasel
         int                                      assetId = 0;
         std::filesystem::path                    mediaPath;
         std::filesystem::path                    ffmpegPath;
-        std::filesystem::path                    cachePath;
+        std::filesystem::path                    cacheDirectory;
         double                                   durationSeconds = 0.0;
-        std::size_t                              targetPeakCount = DefaultPeakCount;
+        std::size_t                              peakCount = 0;
+        std::uint64_t                            cacheKey = 0;
+        std::vector<std::size_t>                 requestedTiles;
         std::uint64_t                            generation = 0;
         std::shared_ptr<std::atomic_bool>        cancellation;
     };
@@ -373,9 +477,11 @@ namespace weasel
         std::shared_ptr<const AudioWaveform>      waveform;
         std::filesystem::path                     mediaPath;
         std::filesystem::path                     ffmpegPath;
-        std::filesystem::path                     cachePath;
+        std::filesystem::path                     cacheDirectory;
         double                                    durationSeconds = 0.0;
-        std::size_t                               targetPeakCount = DefaultPeakCount;
+        std::size_t                               peakCount = 0;
+        std::uint64_t                             cacheKey = 0;
+        std::vector<std::size_t>                  requestedTiles;
         std::shared_ptr<std::atomic_bool>         cancellation;
     };
 
@@ -410,9 +516,9 @@ namespace weasel
     bool AudioWaveformCache::request(int assetId,
                                      const std::filesystem::path& mediaPath,
                                      double durationSeconds,
+                                     const std::vector<AudioWaveformRange>& sourceRanges,
                                      const std::filesystem::path& ffmpegPath,
-                                     const std::filesystem::path& cacheDirectory,
-                                     std::size_t targetPeakCount)
+                                     const std::filesystem::path& cacheDirectory)
     {
         if (assetId <= 0)
         {
@@ -424,11 +530,11 @@ namespace weasel
         const std::filesystem::path normalizedCacheDirectory = cacheDirectory.empty()
             ? std::filesystem::path{}
             : NormalizedPath(cacheDirectory);
-        const std::size_t clampedPeakCount = ClampPeakCount(targetPeakCount, durationSeconds);
-        const std::filesystem::path cachePath = WaveformCachePath(normalizedCacheDirectory,
-                                                                   normalizedMediaPath,
-                                                                   durationSeconds,
-                                                                   clampedPeakCount);
+        const std::size_t peakCount = DefaultPeakCountForDuration(durationSeconds);
+        const std::vector<std::size_t> requestedTiles = RequestedTileIndices(
+            sourceRanges, durationSeconds);
+        const std::uint64_t cacheKey = WaveformCacheKey(
+            normalizedMediaPath, durationSeconds, peakCount);
 
         std::string immediateError;
         if (normalizedMediaPath.empty() || !std::filesystem::exists(normalizedMediaPath))
@@ -438,6 +544,10 @@ namespace weasel
         else if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
         {
             immediateError = "The media duration must be greater than zero to generate a waveform.";
+        }
+        else if (requestedTiles.empty())
+        {
+            immediateError = "No source-audio range was requested for this waveform.";
         }
 
         std::shared_ptr<std::atomic_bool> supersededCancellation;
@@ -454,11 +564,13 @@ namespace weasel
             // draw. Preserve a completed failure for unchanged input rather
             // than repeatedly launching FFmpeg (or rewriting a missing-file
             // error) once per rendered frame.
-            const bool sameRequest = entry->mediaPath == normalizedMediaPath
+            const bool sameAsset = entry->mediaPath == normalizedMediaPath
                 && entry->ffmpegPath == normalizedFfmpegPath
-                && entry->cachePath == cachePath
+                && entry->cacheDirectory == normalizedCacheDirectory
                 && std::abs(entry->durationSeconds - durationSeconds) < 0.0001
-                && entry->targetPeakCount == clampedPeakCount;
+                && entry->peakCount == peakCount
+                && entry->cacheKey == cacheKey;
+            const bool sameRequest = sameAsset && entry->requestedTiles == requestedTiles;
             const bool cachedExistingState = entry->status.state == AudioWaveformState::Queued
                 || entry->status.state == AudioWaveformState::Generating
                 || entry->status.state == AudioWaveformState::Ready
@@ -485,9 +597,11 @@ namespace weasel
                 };
                 entry->mediaPath = normalizedMediaPath;
                 entry->ffmpegPath = normalizedFfmpegPath;
-                entry->cachePath = cachePath;
+                entry->cacheDirectory = normalizedCacheDirectory;
                 entry->durationSeconds = durationSeconds;
-                entry->targetPeakCount = clampedPeakCount;
+                entry->peakCount = peakCount;
+                entry->cacheKey = cacheKey;
+                entry->requestedTiles = requestedTiles;
                 entry->cancellation.reset();
                 accepted = false;
             }
@@ -502,12 +616,17 @@ namespace weasel
             {
                 const auto cancellation = std::make_shared<std::atomic_bool>(false);
                 const std::uint64_t generation = m_nextGeneration++;
-                entry->waveform.reset();
+                if (!sameAsset)
+                {
+                    entry->waveform.reset();
+                }
                 entry->mediaPath = normalizedMediaPath;
                 entry->ffmpegPath = normalizedFfmpegPath;
-                entry->cachePath = cachePath;
+                entry->cacheDirectory = normalizedCacheDirectory;
                 entry->durationSeconds = durationSeconds;
-                entry->targetPeakCount = clampedPeakCount;
+                entry->peakCount = peakCount;
+                entry->cacheKey = cacheKey;
+                entry->requestedTiles = requestedTiles;
                 entry->cancellation = cancellation;
                 entry->status = {
                     AudioWaveformState::Queued,
@@ -520,9 +639,11 @@ namespace weasel
                 work->assetId = assetId;
                 work->mediaPath = normalizedMediaPath;
                 work->ffmpegPath = normalizedFfmpegPath;
-                work->cachePath = cachePath;
+                work->cacheDirectory = normalizedCacheDirectory;
                 work->durationSeconds = durationSeconds;
-                work->targetPeakCount = clampedPeakCount;
+                work->peakCount = peakCount;
+                work->cacheKey = cacheKey;
+                work->requestedTiles = requestedTiles;
                 work->generation = generation;
                 work->cancellation = cancellation;
                 m_requests.push_back(std::move(work));
@@ -697,96 +818,237 @@ namespace weasel
 
             try
             {
-                std::shared_ptr<const AudioWaveform> cachedWaveform;
-                if (LoadWaveformCache(request->cachePath,
-                                      request->durationSeconds,
-                                      request->targetPeakCount,
-                                      cachedWaveform))
+                std::vector<WaveformTile> tiles;
+                tiles.reserve(request->requestedTiles.size());
+                for (const std::size_t tileIndex : request->requestedTiles)
                 {
-                    if (!request->cancellation->load(std::memory_order_acquire))
+                    WaveformTile tile = MakeWaveformTile(tileIndex,
+                                                         request->peakCount,
+                                                         request->durationSeconds,
+                                                         request->cacheDirectory,
+                                                         request->cacheKey);
+                    if (tile.peakCount > 0 && tile.durationSeconds > 0.0)
                     {
-                        publishReady(*request, std::move(cachedWaveform));
+                        tiles.push_back(std::move(tile));
                     }
+                }
+
+                if (tiles.empty())
+                {
+                    publishFailure(*request, "Waveform generation failed.",
+                                   "No valid source-audio tiles were requested.");
                     continue;
                 }
 
-                PeakAccumulator peaks(request->durationSeconds, request->targetPeakCount);
-                float lastPublishedProgress = -0.01f;
-                const std::vector<std::wstring> arguments = {
-                    L"-hide_banner",
-                    L"-nostdin",
-                    L"-loglevel", L"error",
-                    L"-i", WidePathArgument(request->mediaPath),
-                    L"-map", L"0:a:0",
-                    L"-vn",
-                    L"-ac", L"1",
-                    L"-ar", std::to_wstring(WaveformSampleRate),
-                    L"-f", L"s16le",
-                    L"pipe:1"
-                };
-
-                {
-                    std::lock_guard lock(m_processMutex);
-                    m_activeCancellation = request->cancellation;
-                }
-                const ProcessResult result = ProcessRunner::run(
-                    request->ffmpegPath,
-                    arguments,
-                    *request->cancellation,
-                    m_processMutex,
-                    m_activeProcess,
-                    [this, &peaks, &request, &lastPublishedProgress](std::string_view data)
-                    {
-                        peaks.append(data.data(), data.size());
-                        const float progress = peaks.progress();
-                        if (progress >= 1.0f || progress - lastPublishedProgress >= 0.005f)
+                auto waveform = std::make_shared<AudioWaveform>();
+                waveform->durationSeconds = request->durationSeconds;
+                waveform->secondsPerPeak = WaveformSecondsPerPeak;
+                waveform->peaks.resize(request->peakCount);
+                std::vector<bool> readyTiles(tiles.size(), false);
+                std::vector<bool> generatedTiles(tiles.size(), false);
+                const std::size_t totalRequestedPeaks = std::max<std::size_t>(1,
+                    std::accumulate(tiles.begin(), tiles.end(), std::size_t{},
+                        [](std::size_t sum, const WaveformTile& tile)
                         {
-                            publishProgress(*request, progress);
-                            lastPublishedProgress = progress;
-                        }
-                    },
-                    {},
-                    false,
-                    true);
+                            return sum + tile.peakCount;
+                        }));
+                std::size_t completedPeaks = 0;
+                bool hasReadableAudio = false;
+
+                // Load every reusable source tile first. Edits that merely
+                // move clips normally finish here without launching FFmpeg.
+                for (std::size_t index = 0; index < tiles.size(); ++index)
                 {
-                    std::lock_guard lock(m_processMutex);
-                    if (m_activeCancellation == request->cancellation)
+                    const WaveformTile& tile = tiles[index];
+                    std::shared_ptr<const AudioWaveform> cachedTile;
+                    if (!LoadWaveformCache(tile.cachePath,
+                                           tile.durationSeconds,
+                                           tile.peakCount,
+                                           cachedTile))
                     {
-                        m_activeCancellation.reset();
+                        continue;
                     }
+                    std::copy(cachedTile->peaks.begin(), cachedTile->peaks.end(),
+                              waveform->peaks.begin() + static_cast<std::ptrdiff_t>(tile.firstPeak));
+                    readyTiles[index] = true;
+                    completedPeaks += tile.peakCount;
+                    hasReadableAudio = true;
+                }
+                publishProgress(*request, static_cast<float>(completedPeaks)
+                    / static_cast<float>(totalRequestedPeaks));
+
+                bool abandoned = false;
+                bool failed = false;
+                float lastPublishedProgress = static_cast<float>(completedPeaks)
+                    / static_cast<float>(totalRequestedPeaks);
+                for (std::size_t first = 0; first < tiles.size();)
+                {
+                    if (readyTiles[first])
+                    {
+                        ++first;
+                        continue;
+                    }
+
+                    std::size_t last = first;
+                    while (last + 1 < tiles.size()
+                        && last - first + 1 < WaveformBatchTileCount
+                        && !readyTiles[last + 1]
+                        && tiles[last + 1].index == tiles[last].index + 1)
+                    {
+                        ++last;
+                    }
+
+                    const double batchStart = tiles[first].sourceStart;
+                    const double batchEnd = tiles[last].sourceStart + tiles[last].durationSeconds;
+                    const double batchDuration = std::max(0.0, batchEnd - batchStart);
+                    const std::size_t batchPeakCount = std::accumulate(
+                        tiles.begin() + static_cast<std::ptrdiff_t>(first),
+                        tiles.begin() + static_cast<std::ptrdiff_t>(last + 1),
+                        std::size_t{},
+                        [](std::size_t sum, const WaveformTile& tile)
+                        {
+                            return sum + tile.peakCount;
+                        });
+                    PeakMetadataParser parser;
+                    const std::wstring filter =
+                        L"aformat=sample_rates=8000:sample_fmts=s16:channel_layouts=mono,"
+                        L"asetnsamples=n=1000:p=0,"
+                        L"astats=metadata=1:reset=1:measure_perchannel=none:"
+                        L"measure_overall=Min_level+Max_level,"
+                        L"ametadata=print:file='pipe\\:1'";
+                    const std::vector<std::wstring> arguments = {
+                        L"-hide_banner",
+                        L"-nostdin",
+                        L"-nostats",
+                        L"-loglevel", L"error",
+                        L"-ss", WideFromUtf8(Number(batchStart)),
+                        L"-t", WideFromUtf8(Number(batchDuration)),
+                        L"-i", WidePathArgument(request->mediaPath),
+                        L"-map", L"0:a:0",
+                        L"-vn",
+                        L"-af", filter,
+                        L"-f", L"null",
+                        L"-"
+                    };
+
+                    {
+                        std::lock_guard lock(m_processMutex);
+                        m_activeCancellation = request->cancellation;
+                    }
+                    const ProcessResult result = ProcessRunner::run(
+                        request->ffmpegPath,
+                        arguments,
+                        *request->cancellation,
+                        m_processMutex,
+                        m_activeProcess,
+                        [this, &parser, &request, completedPeaks, totalRequestedPeaks,
+                         batchPeakCount, &lastPublishedProgress](std::string_view data)
+                        {
+                            parser.append(data);
+                            const std::size_t batchCompleted = std::min(
+                                batchPeakCount, parser.peaks().size());
+                            const float progress = static_cast<float>(completedPeaks + batchCompleted)
+                                / static_cast<float>(totalRequestedPeaks);
+                            if (progress >= 1.0f || progress - lastPublishedProgress >= 0.005f)
+                            {
+                                publishProgress(*request, progress);
+                                lastPublishedProgress = progress;
+                            }
+                        },
+                        {},
+                        false,
+                        true);
+                    parser.finish();
+                    {
+                        std::lock_guard lock(m_processMutex);
+                        if (m_activeCancellation == request->cancellation)
+                        {
+                            m_activeCancellation.reset();
+                        }
+                    }
+
+                    if (result.cancelled || request->cancellation->load(std::memory_order_acquire))
+                    {
+                        abandoned = true;
+                        break;
+                    }
+                    if (!result.started)
+                    {
+                        publishFailure(*request, "Could not start waveform generation.", result.error);
+                        failed = true;
+                        break;
+                    }
+                    if (!result.error.empty())
+                    {
+                        publishFailure(*request, "Waveform generation did not complete.", result.error);
+                        failed = true;
+                        break;
+                    }
+                    if (result.exitCode != 0)
+                    {
+                        publishFailure(*request,
+                                       "FFmpeg waveform generation exited with code "
+                                           + std::to_string(result.exitCode) + ".",
+                                       result.standardError);
+                        failed = true;
+                        break;
+                    }
+
+                    const std::vector<AudioWaveformPeak>& batchPeaks = parser.peaks();
+                    hasReadableAudio = hasReadableAudio || !batchPeaks.empty();
+                    std::size_t batchOffset = 0;
+                    for (std::size_t index = first; index <= last; ++index)
+                    {
+                        const WaveformTile& tile = tiles[index];
+                        const std::size_t available = batchOffset < batchPeaks.size()
+                            ? std::min(tile.peakCount, batchPeaks.size() - batchOffset)
+                            : 0;
+                        if (available > 0)
+                        {
+                            std::copy_n(batchPeaks.begin() + static_cast<std::ptrdiff_t>(batchOffset),
+                                        available,
+                                        waveform->peaks.begin() + static_cast<std::ptrdiff_t>(tile.firstPeak));
+                        }
+                        readyTiles[index] = true;
+                        generatedTiles[index] = true;
+                        completedPeaks += tile.peakCount;
+                        batchOffset += tile.peakCount;
+                    }
+                    publishProgress(*request, static_cast<float>(completedPeaks)
+                        / static_cast<float>(totalRequestedPeaks));
+                    lastPublishedProgress = static_cast<float>(completedPeaks)
+                        / static_cast<float>(totalRequestedPeaks);
+                    first = last + 1;
                 }
 
-                if (result.cancelled || request->cancellation->load(std::memory_order_acquire))
+                if (abandoned || failed)
                 {
                     continue;
                 }
-                if (!result.started)
+                if (!hasReadableAudio)
                 {
-                    publishFailure(*request, "Could not start waveform generation.", result.error);
+                    publishFailure(*request, "This media does not contain readable audio.", {});
                     continue;
                 }
-                if (!result.error.empty())
+
+                // Publish only after all requested tiles are coherent. Cache
+                // writes are non-fatal and happen after readable audio has
+                // been confirmed, so an empty tail can safely be cached too.
+                for (std::size_t index = 0; index < tiles.size(); ++index)
                 {
-                    publishFailure(*request, "Waveform generation did not complete.", result.error);
-                    continue;
+                    if (!generatedTiles[index])
+                    {
+                        continue;
+                    }
+                    const WaveformTile& tile = tiles[index];
+                    AudioWaveform cachedTile;
+                    cachedTile.durationSeconds = tile.durationSeconds;
+                    cachedTile.peaks.assign(
+                        waveform->peaks.begin() + static_cast<std::ptrdiff_t>(tile.firstPeak),
+                        waveform->peaks.begin() + static_cast<std::ptrdiff_t>(tile.firstPeak + tile.peakCount));
+                    (void)WriteWaveformCache(tile.cachePath, cachedTile);
                 }
-                if (result.exitCode != 0)
-                {
-                    publishFailure(*request,
-                                   "FFmpeg waveform generation exited with code " + std::to_string(result.exitCode) + ".",
-                                   result.standardError);
-                    continue;
-                }
-                if (peaks.sampleCount() == 0)
-                {
-                    publishFailure(*request, "This media does not contain readable audio.", result.standardError);
-                    continue;
-                }
-                const std::shared_ptr<const AudioWaveform> waveform = peaks.finish();
-                // A cache-write failure is deliberately non-fatal: the newly
-                // generated waveform is still immediately useful in this
-                // session and can be rebuilt next time if necessary.
-                (void)WriteWaveformCache(request->cachePath, *waveform);
+                BuildPeakLevels(*waveform);
                 publishReady(*request, waveform);
             }
             catch (const std::exception& exception)

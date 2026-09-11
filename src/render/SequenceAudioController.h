@@ -54,8 +54,8 @@ namespace weasel
             double sequenceDuration,
             const std::vector<SequenceRenderEntry>& audioEntries);
         bool refreshPlayback();
-        bool requestWaveform(const MediaAsset& asset);
-        std::vector<int> requestWaveforms(const std::vector<SequenceRenderEntry>& audioEntries);
+        bool requestWaveform(const MediaAsset& asset,
+                             const std::vector<AudioWaveformRange>& sourceRanges);
         void pruneClipAudioCache() const;
 
     public:

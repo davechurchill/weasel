@@ -1,6 +1,7 @@
 #include "render/RenderPreparation.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace weasel
 {
@@ -46,5 +47,19 @@ namespace weasel
         configuration.cancelRequested = &cancelRequested;
         configuration.onLog = onLog;
         return encoder.open(configuration, error);
+    }
+
+    RenderOutcome CompleteRender(FfmpegOperationResult operation,
+                                 double renderedDuration,
+                                 bool finishedEarly)
+    {
+        RenderOutcome result;
+        result.succeeded = operation.succeeded;
+        result.cancelled = operation.cancelled;
+        result.error = std::move(operation.error);
+        result.log = std::move(operation.log);
+        result.renderedDuration = renderedDuration;
+        result.finishedEarly = finishedEarly;
+        return result;
     }
 }

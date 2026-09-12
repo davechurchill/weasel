@@ -20,22 +20,17 @@
 
 namespace weasel
 {
-    VideoRenderer::Result VideoRenderer::run(const Request& request,
-                                             const Callbacks& callbacks)
+    RenderOutcome VideoRenderer::run(const Request& request,
+                                     const Callbacks& callbacks)
     try
     {
-        Result result;
+        RenderOutcome result;
         if (request.cancelRequested.load(std::memory_order_acquire))
         {
-            result.ffmpeg.cancelled = true;
+            result.cancelled = true;
             return result;
         }
-
-        PreparedSequenceRender prepared;
-        if (!PrepareSequenceRender(request.project, prepared, result.rendererError))
-        {
-            return result;
-        }
+        const PreparedSequenceRender& prepared = request.prepared;
 
         std::unordered_map<std::string, CubeLutLoad> luts;
         for (const SequenceRenderEntry& entry : prepared.plan.entries())
@@ -52,7 +47,7 @@ namespace weasel
             CubeLutLoad lut = FindCubeLut(entry.clip.video.lutPath);
             if (!lut.lut)
             {
-                result.rendererError = "Could not load LUT '"
+                result.error = "Could not load LUT '"
                     + entry.clip.video.lutPath.filename().string() + "': " + lut.error;
                 return result;
             }
@@ -62,7 +57,7 @@ namespace weasel
         FfmpegTimelineEncoder encoder;
         if (!OpenTimelineEncoder(request.project, prepared, request.stagingPath,
                                  request.cancelRequested, request.audioEntriesOverride,
-                                 callbacks.onLog, encoder, result.rendererError))
+                                 callbacks.onLog, encoder, result.error))
         {
             return result;
         }
@@ -73,7 +68,7 @@ namespace weasel
         if (!graphicsContext.setActive(true))
         {
             encoder.abort();
-            result.rendererError = "Could not activate an off-screen OpenGL export context.";
+            result.error = "Could not activate an off-screen OpenGL export context.";
             return result;
         }
 
@@ -133,7 +128,7 @@ namespace weasel
                     &request.cancelRequested
                 };
                 const MediaDecodedFrame* decoded = decoder.read(decodeRequest,
-                                                                 result.rendererError);
+                                                                 result.error);
                 if (!decoded)
                 {
                     failed = true;
@@ -171,14 +166,14 @@ namespace weasel
             }
             if (!compositor.render(layers, prepared.width, prepared.height, 1.0,
                                    prepared.width, prepared.height,
-                                   result.rendererError)
-                || !compositor.copyToImage(renderedFrame, result.rendererError))
+                                   result.error, false)
+                || !compositor.copyToImage(renderedFrame, result.error))
             {
                 failed = true;
                 break;
             }
             if (!encoder.writeRgbaFrame(renderedFrame.getPixelsPtr(), prepared.width * 4,
-                                        frameIndex, result.rendererError))
+                                        frameIndex, result.error))
             {
                 failed = !request.cancelRequested.load(std::memory_order_acquire);
                 break;
@@ -206,23 +201,23 @@ namespace weasel
         if (request.cancelRequested.load(std::memory_order_acquire))
         {
             encoder.abort();
-            result.ffmpeg.cancelled = true;
+            result.cancelled = true;
             return result;
         }
-        result.ffmpeg = encoder.finish(std::max(1.0 / prepared.frameRate,
-                                                result.renderedDuration));
-        return result;
+        return CompleteRender(encoder.finish(std::max(1.0 / prepared.frameRate,
+                                                      result.renderedDuration)),
+                              result.renderedDuration, result.finishedEarly);
     }
     catch (const std::exception& exception)
     {
-        Result result;
-        result.rendererError = "Shader rendering failed: " + std::string(exception.what());
+        RenderOutcome result;
+        result.error = "Shader rendering failed: " + std::string(exception.what());
         return result;
     }
     catch (...)
     {
-        Result result;
-        result.rendererError = "Shader rendering failed with an unknown internal error.";
+        RenderOutcome result;
+        result.error = "Shader rendering failed with an unknown internal error.";
         return result;
     }
 }

@@ -15,6 +15,8 @@
 
 namespace weasel
 {
+    struct PreparedSequenceRender;
+
     enum class ExportState
     {
         Idle,
@@ -72,6 +74,7 @@ namespace weasel
         // Background work receives an immutable value snapshot so export
         // cannot observe concurrent editor mutations.
         void exportWorker(ProjectData project,
+                          PreparedSequenceRender prepared,
                           std::filesystem::path outputPath,
                           std::uint64_t generation,
                           std::vector<SequenceRenderEntry> cachedAudioEntries);

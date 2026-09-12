@@ -1,4 +1,5 @@
 #include "media/PreviewFrameCache.h"
+#include "media/MediaProbe.h"
 #include "util/PathUtils.h"
 
 #include <algorithm>
@@ -189,7 +190,7 @@ namespace weasel
         }
     }
 
-    std::shared_ptr<const PreviewFrame> PreviewFrameCache::find(const std::filesystem::path& mediaPath,
+    std::shared_ptr<const MediaDecodedFrame> PreviewFrameCache::find(const std::filesystem::path& mediaPath,
                                                                  double sourceTime,
                                                                  int maximumPreviewEdge,
                                                                  std::uint64_t streamId)
@@ -352,6 +353,8 @@ namespace weasel
 
     void PreviewFrameCache::workerMain()
     {
+        // Decoder cursors belong to this worker and close before the worker joins.
+        MediaDecoder decoder(8);
         for (;;)
         {
             Request request;
@@ -371,19 +374,31 @@ namespace weasel
                 m_activeKey = &request.key;
             }
 
-            auto frame = std::make_shared<PreviewFrame>();
             std::string error;
-            PreviewFrameReadOptions options;
-            options.forwardPlayback = request.allowForwardDecode;
-            options.streamId = request.key.streamId;
-            options.cancelRequested = &m_cancelRequested;
-            const bool decoded = MediaProbe::readPreviewFrame(
+            const std::optional<MediaKind> kind = MediaProbe::classifyPath(request.key.mediaPath);
+            MediaDecodeRequest decodeRequest{
                 request.key.mediaPath,
+                request.key.streamId,
                 static_cast<double>(request.key.sourceMicroseconds) / 1000000.0,
+                0.0,
+                0,
+                0,
                 request.key.maximumPreviewEdge,
-                *frame,
-                error,
-                options);
+                kind && *kind == MediaKind::Image,
+                request.allowForwardDecode,
+                &m_cancelRequested
+            };
+            const MediaDecodedFrame* decoded = decoder.read(decodeRequest, error);
+            if (!decoded && !kind)
+            {
+                decodeRequest.isStillImage = true;
+                decoded = decoder.read(decodeRequest, error);
+            }
+            std::shared_ptr<const MediaDecodedFrame> frame;
+            if (decoded)
+            {
+                frame = std::make_shared<MediaDecodedFrame>(*decoded);
+            }
 
             {
                 std::lock_guard lock(m_mutex);
@@ -394,7 +409,7 @@ namespace weasel
                     continue;
                 }
 
-                if (!decoded || frame->rgba.empty())
+                if (!frame || frame->rgba.empty())
                 {
                     if (request.cacheFailure)
                     {

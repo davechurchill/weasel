@@ -34,16 +34,6 @@ namespace
                     int rotation,
                     weasel::MediaDecodedFrame& output)
     {
-        rotation = NormalizeDegrees(rotation);
-        if (rotation == 0)
-        {
-            output.width = sourceWidth;
-            output.height = sourceHeight;
-            output.strideBytes = sourceWidth * 4;
-            output.rgba = source;
-            return;
-        }
-
         output.width = rotation == 180 ? sourceWidth : sourceHeight;
         output.height = rotation == 180 ? sourceHeight : sourceWidth;
         output.strideBytes = output.width * 4;
@@ -401,6 +391,7 @@ namespace weasel
             {
                 rotation = 90;
             }
+            rotation = NormalizeDegrees(rotation);
             const bool quarterTurn = rotation == 90 || rotation == 270;
             const int displayWidth = quarterTurn ? decoder.decoded->height : decoder.decoded->width;
             const int displayHeight = quarterTurn ? decoder.decoded->width : decoder.decoded->height;
@@ -431,8 +422,13 @@ namespace weasel
                 return false;
             }
             const int stride = convertedWidth * 4;
-            decoder.converted.resize(static_cast<std::size_t>(stride) * convertedHeight);
-            std::uint8_t* destination[] = { decoder.converted.data() };
+            // Most sources need no rotation. Convert directly into the frame
+            // consumed by the compositor instead of copying a second RGBA
+            // buffer after sws_scale.
+            std::vector<std::uint8_t>& converted = rotation == 0
+                ? decoder.frame.rgba : decoder.converted;
+            converted.resize(static_cast<std::size_t>(stride) * convertedHeight);
+            std::uint8_t* destination[] = { converted.data() };
             const int destinationStride[] = { stride };
             const int rows = sws_scale(decoder.converter,
                                        decoder.decoded->data,
@@ -446,8 +442,17 @@ namespace weasel
                 error = "FFmpeg could not convert the decoded video frame to RGBA.";
                 return false;
             }
-            RotateRgba(decoder.converted, convertedWidth, convertedHeight,
-                       rotation, decoder.frame);
+            if (rotation == 0)
+            {
+                decoder.frame.width = convertedWidth;
+                decoder.frame.height = convertedHeight;
+                decoder.frame.strideBytes = stride;
+            }
+            else
+            {
+                RotateRgba(converted, convertedWidth, convertedHeight,
+                           rotation, decoder.frame);
+            }
             decoder.maximumOutputEdge = request.maximumOutputEdge;
             decoder.frame.serial = m_nextSerial++;
             error.clear();

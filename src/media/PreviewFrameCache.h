@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/MediaProbe.h"
+#include "media/MediaDecoder.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -16,7 +16,7 @@ namespace weasel
 {
     struct PreviewFrameLookup
     {
-        std::shared_ptr<const PreviewFrame> frame;
+        std::shared_ptr<const MediaDecodedFrame> frame;
         double                              sourceTime = 0.0;
     };
 
@@ -55,7 +55,7 @@ namespace weasel
         struct CachedFrame
         {
             FrameKey                            key;
-            std::shared_ptr<const PreviewFrame> frame;
+            std::shared_ptr<const MediaDecodedFrame> frame;
             std::uint64_t                       lastUse = 0;
             std::uint64_t                       decodeOrder = 0;
             std::size_t                         byteCount = 0;
@@ -111,7 +111,7 @@ namespace weasel
                      bool highPriority,
                      bool cacheFailure = false);
 
-        std::shared_ptr<const PreviewFrame> find(const std::filesystem::path& mediaPath,
+        std::shared_ptr<const MediaDecodedFrame> find(const std::filesystem::path& mediaPath,
                                                                 double sourceTime,
                                                                 int maximumPreviewEdge,
                                                                 std::uint64_t streamId);

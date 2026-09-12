@@ -839,6 +839,7 @@ namespace weasel
         double                                                  m_toneCurveHighlights = 0.0;
         bool                                                    m_hasToneCurve = false;
         bool                                                    m_shaderReady = false;
+        bool                                                    m_hasRenderedFrame = false;
         bool                                                    m_hasTexture = false;
 
         static bool resizeRenderTexture(sf::RenderTexture& texture, sf::Vector2u size, std::string& error)
@@ -1239,7 +1240,8 @@ namespace weasel
                     double outputScale,
                     int canvasWidth,
                     int canvasHeight,
-                    std::string& error)
+                    std::string& error,
+                    bool updateDisplayTexture)
         {
             if (!m_shaderReady)
             {
@@ -1252,6 +1254,9 @@ namespace weasel
                 error = "The GPU compositor received invalid output dimensions.";
                 return false;
             }
+
+            m_hasRenderedFrame = false;
+            m_hasTexture = false;
 
             const sf::Vector2u canvasSize(static_cast<unsigned int>(canvasWidth),
                                           static_cast<unsigned int>(canvasHeight));
@@ -1292,21 +1297,25 @@ namespace weasel
             });
 
             m_composite.display();
-            if (m_outputTexture.getSize() != canvasSize && !m_outputTexture.resize(canvasSize))
+            if (updateDisplayTexture)
             {
-                error = "Could not allocate the GPU compositor output texture.";
-                return false;
+                if (m_outputTexture.getSize() != canvasSize && !m_outputTexture.resize(canvasSize))
+                {
+                    error = "Could not allocate the GPU compositor output texture.";
+                    return false;
+                }
+                m_outputTexture.setSmooth(true);
+                m_outputTexture.update(m_composite.getTexture());
+                m_hasTexture = true;
             }
-            m_outputTexture.setSmooth(true);
-            m_outputTexture.update(m_composite.getTexture());
-            m_hasTexture = true;
+            m_hasRenderedFrame = true;
             error.clear();
             return true;
         }
 
         bool copyToImage(sf::Image& output, std::string& error) const
         {
-            if (!m_hasTexture)
+            if (!m_hasRenderedFrame)
             {
                 error = "The GPU compositor has no rendered frame to read back.";
                 return false;
@@ -1335,6 +1344,7 @@ namespace weasel
         void reset()
         {
             m_layers.clear();
+            m_hasRenderedFrame = false;
             m_hasTexture = false;
         }
     };
@@ -1352,10 +1362,11 @@ namespace weasel
                                  double outputScale,
                                  int canvasWidth,
                                  int canvasHeight,
-                                 std::string& error)
+                                 std::string& error,
+                                 bool updateDisplayTexture)
     {
         return m_impl->render(layers, sequenceWidth, sequenceHeight, outputScale,
-                              canvasWidth, canvasHeight, error);
+                              canvasWidth, canvasHeight, error, updateDisplayTexture);
     }
 
     bool VideoCompositor::copyToImage(sf::Image& output, std::string& error) const

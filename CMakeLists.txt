@@ -207,6 +207,7 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
         tests/FfmpegBackendSmoke.cpp
         src/media/FfmpegBackend.cpp
         src/media/MediaDecoder.cpp
+        src/media/PreviewFrameCache.cpp
         src/media/MediaProbe.cpp
     )
     target_include_directories(WeaselFfmpegSmoke PRIVATE

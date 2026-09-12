@@ -2,6 +2,7 @@
 
 #include "media/FfmpegBackend.h"
 #include "project/ProjectData.h"
+#include "render/RenderPreparation.h"
 
 #include <atomic>
 #include <cstdint>
@@ -27,6 +28,7 @@ namespace weasel
         struct Request
         {
             const ProjectData&                  project;
+            const PreparedSequenceRender&       prepared;
             const std::filesystem::path&        stagingPath;
             std::atomic_bool&                   cancelRequested;
             // Unlike cancellation, this asks the renderer to finish the frame
@@ -42,14 +44,6 @@ namespace weasel
             FfmpegLogCallback                                     onLog;
         };
 
-        struct Result
-        {
-            FfmpegOperationResult ffmpeg;
-            std::string         rendererError;
-            double              renderedDuration = 0.0;
-            bool                finishedEarly = false;
-        };
-
-        Result run(const Request& request, const Callbacks& callbacks = {});
+        RenderOutcome run(const Request& request, const Callbacks& callbacks = {});
     };
 }

@@ -23,7 +23,7 @@ namespace
         double                                      sourceTime = 0.0;
         double                                      displayedSourceTime = 0.0;
         std::uint64_t                               streamId = 0;
-        std::shared_ptr<const weasel::PreviewFrame> frame;
+        std::shared_ptr<const weasel::MediaDecodedFrame> frame;
         std::shared_ptr<const weasel::CubeLut>      lut;
         std::string                                 lutError;
         std::string                                 lutCacheKey;

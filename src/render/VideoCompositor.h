@@ -76,13 +76,15 @@ namespace weasel
         VideoCompositor& operator=(const VideoCompositor&) = delete;
 
         // Layers are composited in vector order, from back to front.
+        // Export can skip the separate monitor texture and read back directly.
         bool render(const std::vector<VideoCompositorLayer>& layers,
                     int sequenceWidth,
                     int sequenceHeight,
                     double outputScale,
                     int canvasWidth,
                     int canvasHeight,
-                    std::string& error);
+                    std::string& error,
+                    bool updateDisplayTexture = true);
         bool copyToImage(sf::Image& output, std::string& error) const;
         const sf::Texture* texture() const;
         bool hasTexture() const;

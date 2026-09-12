@@ -2,7 +2,7 @@
 
 #include "util/FileUtils.h"
 #include "render/FfmpegRenderer.h"
-#include "render/SequenceRenderPlan.h"
+#include "render/RenderPreparation.h"
 #include "render/VideoRenderer.h"
 
 #include <SFML/Graphics/Image.hpp>
@@ -88,12 +88,10 @@ namespace weasel
         prepared.normalize();
         m_activeRenderer.store(prepared.exportSettings().renderer, std::memory_order_release);
         m_previewEnabled.store(false, std::memory_order_release);
-        SequenceRenderPlan plan;
-        SequenceRenderPlanOptions options;
-        options.validateLuts = true;
+        PreparedSequenceRender preparedRender;
         std::string validationError;
-        if (!SequenceRenderPlan::build(prepared, plan, validationError, options)
-            || plan.entries().empty())
+        if (!PrepareSequenceRender(prepared, preparedRender, validationError)
+            || preparedRender.plan.entries().empty())
         {
             error = validationError.empty()
                 ? "Add at least one clip to the sequence before exporting."
@@ -101,7 +99,7 @@ namespace weasel
             return false;
         }
         if (prepared.exportSettings().renderer == ExportRenderer::Ffmpeg
-            && !FfmpegRenderer::validate(plan, validationError))
+            && !FfmpegRenderer::validate(preparedRender.plan, validationError))
         {
             error = validationError;
             return false;
@@ -129,14 +127,15 @@ namespace weasel
             m_exportEndedAt.reset();
             m_status = {
                 ExportState::Running, outputPath, "Exporting...", {},
-                0.0, 0.0, std::max(0.05, prepared.duration()), false
+                0.0, 0.0, preparedRender.duration, false
             };
             m_status.backendDescription = "Linked FFmpeg libraries (no external process)";
         }
         try
         {
             m_worker = std::thread(&VideoExporter::exportWorker, this,
-                                   std::move(prepared), outputPath, generation,
+                                   std::move(prepared), std::move(preparedRender),
+                                   outputPath, generation,
                                    cachedAudioEntries);
             error.clear();
             return true;
@@ -236,12 +235,13 @@ namespace weasel
     }
 
     void VideoExporter::exportWorker(ProjectData project,
+                                     PreparedSequenceRender prepared,
                                      std::filesystem::path outputPath,
                                      std::uint64_t generation,
                                      std::vector<SequenceRenderEntry> cachedAudioEntries)
     {
         const bool direct = project.exportSettings().renderer == ExportRenderer::Ffmpeg;
-        const double duration = std::max(0.05, project.duration());
+        const double duration = prepared.duration;
         const auto startedAt = std::chrono::steady_clock::now();
         const std::filesystem::path stagingPath = StagingFilePath(
             outputPath, "export", generation);
@@ -275,11 +275,12 @@ namespace weasel
         }
 
         auto rateSampleAt = startedAt;
+        auto nextSizeSampleAt = startedAt;
         double rateSampleProgress = 0.0;
         double smoothedRate = 0.0;
         bool haveRateSample = false;
         const auto reportProgress = [this, duration, stagingPath,
-                                     &rateSampleAt, &rateSampleProgress,
+                                     &rateSampleAt, &nextSizeSampleAt, &rateSampleProgress,
                                      &smoothedRate, &haveRateSample](double seconds)
         {
             std::lock_guard lock(m_mutex);
@@ -292,17 +293,21 @@ namespace weasel
             {
                 return;
             }
-            std::error_code sizeError;
-            const std::uintmax_t size = std::filesystem::file_size(stagingPath, sizeError);
-            if (!sizeError && size <= std::numeric_limits<std::uint64_t>::max())
-            {
-                m_status.outputFileSizeBytes = std::max(
-                    m_status.outputFileSizeBytes, static_cast<std::uint64_t>(size));
-            }
             m_status.processedSeconds = processed;
             m_status.durationSeconds = duration;
             m_status.progress = std::max(m_status.progress, processed / duration);
             const auto now = std::chrono::steady_clock::now();
+            if (now >= nextSizeSampleAt || processed >= duration - 0.000001)
+            {
+                std::error_code sizeError;
+                const std::uintmax_t size = std::filesystem::file_size(stagingPath, sizeError);
+                if (!sizeError && size <= std::numeric_limits<std::uint64_t>::max())
+                {
+                    m_status.outputFileSizeBytes = std::max(
+                        m_status.outputFileSizeBytes, static_cast<std::uint64_t>(size));
+                }
+                nextSizeSampleAt = now + std::chrono::milliseconds(500);
+            }
             const double sampleElapsed = std::chrono::duration<double>(
                 now - rateSampleAt).count();
             if (!haveRateSample)
@@ -372,49 +377,38 @@ namespace weasel
             }
         };
 
-        FfmpegOperationResult operation;
-        std::string rendererError;
-        double completedDuration = duration;
-        bool partial = false;
+        RenderOutcome outcome;
         if (direct)
         {
             FfmpegRenderer renderer;
             FfmpegRenderer::Request request{
-                project, stagingPath, m_cancelRequested,
+                project, prepared, stagingPath, m_cancelRequested,
                 cachedAudioEntries.empty() ? nullptr : &cachedAudioEntries
             };
             FfmpegRenderer::Callbacks callbacks{ reportProgress, onLog };
-            FfmpegRenderer::Result result = renderer.run(request, callbacks);
-            operation = std::move(result.ffmpeg);
-            rendererError = std::move(result.rendererError);
+            outcome = renderer.run(request, callbacks);
         }
         else
         {
             VideoRenderer renderer;
             VideoRenderer::Request request{
-                project, stagingPath, m_cancelRequested, m_finishRequested,
+                project, prepared, stagingPath, m_cancelRequested, m_finishRequested,
                 cachedAudioEntries.empty() ? nullptr : &cachedAudioEntries
             };
             VideoRenderer::Callbacks callbacks{ reportProgress, onPreview, onLog };
-            VideoRenderer::Result result = renderer.run(request, callbacks);
-            operation = std::move(result.ffmpeg);
-            rendererError = std::move(result.rendererError);
-            completedDuration = result.renderedDuration > 0.0
-                ? result.renderedDuration : duration;
-            partial = result.finishedEarly;
+            outcome = renderer.run(request, callbacks);
         }
 
-        if (!rendererError.empty() || !operation.error.empty()
-            || (!operation.succeeded && !operation.cancelled))
+        if (!outcome.succeeded)
         {
             RemoveFileQuietly(stagingPath);
-            if (m_cancelRequested.load(std::memory_order_acquire) || operation.cancelled)
+            if (m_cancelRequested.load(std::memory_order_acquire) || outcome.cancelled)
             {
-                setCancelled(operation.log);
+                setCancelled(outcome.log);
                 return;
             }
             std::lock_guard lock(m_mutex);
-            std::string detail = !rendererError.empty() ? rendererError : operation.error;
+            std::string detail = outcome.error;
             if (detail.empty())
             {
                 detail = "The linked FFmpeg encoder did not complete.";
@@ -422,17 +416,19 @@ namespace weasel
             m_status = {
                 ExportState::Failed, outputPath,
                 direct ? "FFmpeg renderer failed." : "Shader renderer failed.",
-                detail + (operation.log.empty() ? "" : "\n" + TailText(operation.log))
+                detail + (outcome.log.empty() ? "" : "\n" + TailText(outcome.log))
             };
             return;
         }
-        if (operation.cancelled || m_cancelRequested.load(std::memory_order_acquire))
+        if (outcome.cancelled || m_cancelRequested.load(std::memory_order_acquire))
         {
             RemoveFileQuietly(stagingPath);
-            setCancelled(operation.log);
+            setCancelled(outcome.log);
             return;
         }
 
+        const double completedDuration = outcome.renderedDuration > 0.0
+            ? outcome.renderedDuration : duration;
         bool cancelledBeforePublish = false;
         std::string commitError;
         {
@@ -445,9 +441,9 @@ namespace weasel
             {
                 m_status = {
                     ExportState::Succeeded, outputPath,
-                    (partial ? "Partial export complete: " : "Export complete: ")
+                    (outcome.finishedEarly ? "Partial export complete: " : "Export complete: ")
                         + outputPath.filename().string(),
-                    TailText(operation.log), 1.0, completedDuration,
+                    TailText(outcome.log), 1.0, completedDuration,
                     completedDuration, false
                 };
                 std::error_code sizeError;
@@ -463,7 +459,7 @@ namespace weasel
         if (cancelledBeforePublish)
         {
             RemoveFileQuietly(stagingPath);
-            setCancelled(operation.log);
+            setCancelled(outcome.log);
             return;
         }
         RemoveFileQuietly(stagingPath);

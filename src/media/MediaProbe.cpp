@@ -162,44 +162,4 @@ namespace weasel
         return false;
     }
 
-    bool MediaProbe::readPreviewFrame(const std::filesystem::path& mediaPath,
-                                      double sourceTime,
-                                      int maximumPreviewEdge,
-                                      PreviewFrame& frame,
-                                      std::string& error,
-                                      const PreviewFrameReadOptions& options)
-    {
-        frame = {};
-        const std::optional<MediaKind> kind = classifyPath(mediaPath);
-
-        thread_local MediaDecoder decoder(8);
-        MediaDecodeRequest request{
-            mediaPath,
-            options.streamId,
-            std::max(0.0, sourceTime),
-            0.0,
-            0,
-            0,
-            std::max(1, maximumPreviewEdge),
-            kind && *kind == MediaKind::Image,
-            options.forwardPlayback,
-            options.cancelRequested
-        };
-        const MediaDecodedFrame* decoded = decoder.read(request, error);
-        if (!decoded && !kind)
-        {
-            request.isStillImage = true;
-            decoded = decoder.read(request, error);
-        }
-        if (!decoded)
-        {
-            return false;
-        }
-
-        frame.width = decoded->width;
-        frame.height = decoded->height;
-        frame.rgba = decoded->rgba;
-        error.clear();
-        return true;
-    }
 }

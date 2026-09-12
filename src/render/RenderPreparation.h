@@ -20,6 +20,16 @@ namespace weasel
         double             duration = 0.0;
     };
 
+    struct RenderOutcome
+    {
+        bool        succeeded = false;
+        bool        cancelled = false;
+        std::string error;
+        std::string log;
+        double      renderedDuration = 0.0;
+        bool        finishedEarly = false;
+    };
+
     bool PrepareSequenceRender(const ProjectData& project,
                                PreparedSequenceRender& prepared,
                                std::string& error);
@@ -33,4 +43,8 @@ namespace weasel
         const FfmpegLogCallback& onLog,
         FfmpegTimelineEncoder& encoder,
         std::string& error);
+
+    RenderOutcome CompleteRender(FfmpegOperationResult operation,
+                                 double renderedDuration,
+                                 bool finishedEarly = false);
 }

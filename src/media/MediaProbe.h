@@ -2,32 +2,12 @@
 
 #include "project/ProjectData.h"
 
-#include <atomic>
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace weasel
 {
-    struct PreviewFrame
-    {
-        int                            width = 0;
-        int                            height = 0;
-        std::vector<unsigned char> rgba;
-    };
-
-    // A timeline clip owns a stable decoder cursor while it plays.  This lets
-    // a forward-moving transport read subsequent frames without asking the
-    // decoder to seek back to a keyframe for every preview sample.
-    struct PreviewFrameReadOptions
-    {
-        bool          forwardPlayback = false;
-        std::uint64_t streamId = 0;
-        std::atomic_bool* cancelRequested = nullptr;
-    };
-
     class MediaProbe
     {
     public:
@@ -40,12 +20,5 @@ namespace weasel
                           MediaAsset& asset,
                           std::string& error,
                           std::optional<MediaKind> expectedKind = std::nullopt);
-
-        static bool readPreviewFrame(const std::filesystem::path& mediaPath,
-                                     double sourceTime,
-                                     int maximumPreviewEdge,
-                                     PreviewFrame& frame,
-                                     std::string& error,
-                                     const PreviewFrameReadOptions& options = {});
     };
 }

@@ -2,7 +2,7 @@
 
 #include "media/FfmpegBackend.h"
 #include "project/ProjectData.h"
-#include "render/SequenceRenderPlan.h"
+#include "render/RenderPreparation.h"
 
 #include <atomic>
 #include <filesystem>
@@ -21,6 +21,7 @@ namespace weasel
         struct Request
         {
             const ProjectData&                  project;
+            const PreparedSequenceRender&       prepared;
             const std::filesystem::path&        stagingPath;
             std::atomic_bool&                   cancelRequested;
             const std::vector<SequenceRenderEntry>* audioEntriesOverride = nullptr;
@@ -32,18 +33,12 @@ namespace weasel
             FfmpegLogCallback                                     onLog;
         };
 
-        struct Result
-        {
-            FfmpegOperationResult ffmpeg;
-            std::string         rendererError;
-        };
-
         // FFmpeg Render deliberately declines shader-only effects so choosing
         // the faster path can never silently produce a materially different
         // image. Basic clip timing, transforms, grading, LUTs, and audio are
         // represented directly in the native filter graph.
         static bool validate(const SequenceRenderPlan& plan, std::string& error);
 
-        Result run(const Request& request, const Callbacks& callbacks = {});
+        RenderOutcome run(const Request& request, const Callbacks& callbacks = {});
     };
 }

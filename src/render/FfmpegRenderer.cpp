@@ -47,19 +47,18 @@ namespace weasel
         return true;
     }
 
-    FfmpegRenderer::Result FfmpegRenderer::run(const Request& request,
-                                               const Callbacks& callbacks)
+    RenderOutcome FfmpegRenderer::run(const Request& request,
+                                     const Callbacks& callbacks)
     try
     {
-        Result result;
+        RenderOutcome result;
         if (request.cancelRequested.load(std::memory_order_acquire))
         {
-            result.ffmpeg.cancelled = true;
+            result.cancelled = true;
             return result;
         }
-        PreparedSequenceRender prepared;
-        if (!PrepareSequenceRender(request.project, prepared, result.rendererError)
-            || !validate(prepared.plan, result.rendererError))
+        const PreparedSequenceRender& prepared = request.prepared;
+        if (!validate(prepared.plan, result.error))
         {
             return result;
         }
@@ -75,14 +74,14 @@ namespace weasel
         FfmpegTimelineEncoder encoder;
         if (!OpenTimelineEncoder(request.project, prepared, request.stagingPath,
                                  request.cancelRequested, request.audioEntriesOverride,
-                                 callbacks.onLog, encoder, result.rendererError))
+                                 callbacks.onLog, encoder, result.error))
         {
             return result;
         }
         FfmpegStreamingVideoSource videoSource;
         if (!videoSource.open(visualEntries, prepared.width, prepared.height,
                               prepared.frameRate, prepared.duration,
-                              result.rendererError, encoder.videoPixelFormat(),
+                              result.error, encoder.videoPixelFormat(),
                               &request.cancelRequested))
         {
             encoder.abort();
@@ -97,25 +96,25 @@ namespace weasel
             if (request.cancelRequested.load(std::memory_order_acquire))
             {
                 encoder.abort();
-                result.ffmpeg.cancelled = true;
+                result.cancelled = true;
                 return result;
             }
             bool reachedEnd = false;
-            const void* nativeFrame = nullptr;
+            AVFrame* nativeFrame = nullptr;
             if (!videoSource.readNativeFrame(nativeFrame, reachedEnd,
-                                             result.rendererError))
+                                             result.error))
             {
                 encoder.abort();
                 return result;
             }
             if (reachedEnd)
             {
-                result.rendererError = "The streaming FFmpeg graph ended before the sequence duration.";
+                result.error = "The streaming FFmpeg graph ended before the sequence duration.";
                 encoder.abort();
                 return result;
             }
             if (!encoder.writeNativeFrame(nativeFrame, frameIndex,
-                                          result.rendererError))
+                                          result.error))
             {
                 encoder.abort();
                 return result;
@@ -126,19 +125,18 @@ namespace weasel
                     static_cast<double>(frameIndex + 1) / prepared.frameRate));
             }
         }
-        result.ffmpeg = encoder.finish(prepared.duration);
-        return result;
+        return CompleteRender(encoder.finish(prepared.duration), prepared.duration);
     }
     catch (const std::exception& exception)
     {
-        Result result;
-        result.rendererError = "FFmpeg rendering failed: " + std::string(exception.what());
+        RenderOutcome result;
+        result.error = "FFmpeg rendering failed: " + std::string(exception.what());
         return result;
     }
     catch (...)
     {
-        Result result;
-        result.rendererError = "FFmpeg rendering failed with an unknown internal error.";
+        RenderOutcome result;
+        result.error = "FFmpeg rendering failed with an unknown internal error.";
         return result;
     }
 }

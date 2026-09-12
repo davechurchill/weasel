@@ -112,7 +112,7 @@ int main(int argc, char** argv)
     for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)
     {
         bool reachedEnd = false;
-        const void* frame = nullptr;
+        AVFrame* frame = nullptr;
         const auto sourceStarted = std::chrono::steady_clock::now();
         const bool sourceOk = source.readNativeFrame(frame, reachedEnd, error);
         sourceSeconds += std::chrono::duration<double>(

@@ -1518,7 +1518,7 @@ namespace weasel
                   double frameRate,
                   double durationSeconds,
                   std::string& error,
-                  int outputPixelFormat,
+                  AVPixelFormat outputPixelFormat,
                   std::atomic_bool* cancelRequested)
         {
             if (width <= 0 || height <= 0 || frameRate <= 0.0 || durationSeconds <= 0.0)
@@ -1536,8 +1536,7 @@ namespace weasel
             m_width = width;
             m_height = height;
             m_cancel = cancelRequested;
-            m_pixelFormat = outputPixelFormat < 0
-                ? AV_PIX_FMT_RGBA : static_cast<AVPixelFormat>(outputPixelFormat);
+            m_pixelFormat = outputPixelFormat;
             const AVPixFmtDescriptor* outputDescriptor = av_pix_fmt_desc_get(m_pixelFormat);
             const char* outputFormatName = av_get_pix_fmt_name(m_pixelFormat);
             if (!outputDescriptor || !outputFormatName
@@ -1700,7 +1699,7 @@ namespace weasel
             return true;
         }
 
-        bool readNativeFrame(const void*& nativeFrame,
+        bool readNativeFrame(AVFrame*& nativeFrame,
                              bool& reachedEnd,
                              std::string& error)
         {
@@ -1728,7 +1727,7 @@ namespace weasel
         double frameRate,
         double durationSeconds,
         std::string& error,
-        int outputPixelFormat,
+        AVPixelFormat outputPixelFormat,
         std::atomic_bool* cancelRequested)
     {
         return m_impl->open(visualEntries, outputWidth, outputHeight,
@@ -1736,7 +1735,7 @@ namespace weasel
                             cancelRequested);
     }
 
-    bool FfmpegStreamingVideoSource::readNativeFrame(const void*& nativeFrame,
+    bool FfmpegStreamingVideoSource::readNativeFrame(AVFrame*& nativeFrame,
                                                       bool& reachedEnd,
                                                       std::string& error)
     {
@@ -2410,19 +2409,23 @@ namespace weasel
                 error = "Could not make the export video frame writable.";
                 return false;
             }
-            m_sws = sws_getCachedContext(m_sws,
-                                         m_configuration.width,
-                                         m_configuration.height,
-                                         AV_PIX_FMT_RGBA,
-                                         m_videoCodec->width,
-                                         m_videoCodec->height,
-                                         m_videoCodec->pix_fmt,
-                                         SWS_BICUBIC,
-                                         nullptr, nullptr, nullptr);
+            // Encoder dimensions and pixel format do not change mid-export.
+            // Keep the converter rather than revalidating it on every frame.
             if (!m_sws)
             {
-                error = "Could not initialize the export pixel converter.";
-                return false;
+                m_sws = sws_getContext(m_configuration.width,
+                                       m_configuration.height,
+                                       AV_PIX_FMT_RGBA,
+                                       m_videoCodec->width,
+                                       m_videoCodec->height,
+                                       m_videoCodec->pix_fmt,
+                                       SWS_BICUBIC,
+                                       nullptr, nullptr, nullptr);
+                if (!m_sws)
+                {
+                    error = "Could not initialize the export pixel converter.";
+                    return false;
+                }
             }
             const std::uint8_t* sourceData[] = { pixels };
             const int sourceStride[] = { strideBytes };
@@ -2445,15 +2448,14 @@ namespace weasel
             return mixUntil(targetAudio, error);
         }
 
-        bool writeNativeFrame(const void* nativeFrame,
+        bool writeNativeFrame(AVFrame* nativeFrame,
                               std::int64_t frameIndex,
                               std::string& error)
         {
-            const auto* source = static_cast<const AVFrame*>(nativeFrame);
-            if (!source || frameIndex < 0 || m_finished
-                || source->width != m_videoCodec->width
-                || source->height != m_videoCodec->height
-                || source->format != m_videoCodec->pix_fmt)
+            if (!nativeFrame || frameIndex < 0 || m_finished
+                || nativeFrame->width != m_videoCodec->width
+                || nativeFrame->height != m_videoCodec->height
+                || nativeFrame->format != m_videoCodec->pix_fmt)
             {
                 error = "Invalid native frame passed to the export encoder.";
                 return false;
@@ -2467,7 +2469,7 @@ namespace weasel
             // returns, so the sink-owned frame can be submitted directly.
             // Avoiding an AVFrame clone here removes one heap allocation from
             // every output frame on the FFmpeg Render hot path.
-            AVFrame* submitted = const_cast<AVFrame*>(source);
+            AVFrame* submitted = nativeFrame;
             const std::int64_t originalPts = submitted->pts;
             const std::int64_t originalDuration = submitted->duration;
             const AVPictureType originalPictureType = submitted->pict_type;
@@ -2559,9 +2561,9 @@ namespace weasel
             m_finished = true;
         }
 
-        int videoPixelFormat() const noexcept
+        AVPixelFormat videoPixelFormat() const noexcept
         {
-            return m_videoCodec ? static_cast<int>(m_videoCodec->pix_fmt) : -1;
+            return m_videoCodec ? m_videoCodec->pix_fmt : AV_PIX_FMT_NONE;
         }
 
     };
@@ -2586,7 +2588,7 @@ namespace weasel
         return m_impl->writeRgbaFrame(pixels, strideBytes, frameIndex, error);
     }
 
-    bool FfmpegTimelineEncoder::writeNativeFrame(const void* nativeFrame,
+    bool FfmpegTimelineEncoder::writeNativeFrame(AVFrame* nativeFrame,
                                                   std::int64_t frameIndex,
                                                   std::string& error)
     {
@@ -2603,7 +2605,7 @@ namespace weasel
         m_impl->abort();
     }
 
-    int FfmpegTimelineEncoder::videoPixelFormat() const noexcept
+    AVPixelFormat FfmpegTimelineEncoder::videoPixelFormat() const noexcept
     {
         return m_impl->videoPixelFormat();
     }

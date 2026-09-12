@@ -12,6 +12,12 @@
 #include <string_view>
 #include <vector>
 
+extern "C"
+{
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>
+}
+
 namespace weasel
 {
     struct FfmpegMediaInfo
@@ -86,9 +92,10 @@ namespace weasel
                   double frameRate,
                   double durationSeconds,
                   std::string& error,
-                  int outputPixelFormat = -1,
+                  AVPixelFormat outputPixelFormat = AV_PIX_FMT_RGBA,
                   std::atomic_bool* cancelRequested = nullptr);
-        bool readNativeFrame(const void*& nativeFrame,
+        // The returned frame is borrowed until the next read or destruction.
+        bool readNativeFrame(AVFrame*& nativeFrame,
                              bool& reachedEnd,
                              std::string& error);
     };
@@ -125,11 +132,11 @@ namespace weasel
                             int strideBytes,
                             std::int64_t frameIndex,
                             std::string& error);
-        bool writeNativeFrame(const void* nativeFrame,
+        bool writeNativeFrame(AVFrame* nativeFrame,
                               std::int64_t frameIndex,
                               std::string& error);
         FfmpegOperationResult finish(double renderedDurationSeconds);
         void abort() noexcept;
-        int videoPixelFormat() const noexcept;
+        AVPixelFormat videoPixelFormat() const noexcept;
     };
 }

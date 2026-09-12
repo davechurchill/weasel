@@ -1,21 +1,19 @@
 #include "media/FfmpegBackend.h"
 #include "media/MediaDecoder.h"
 #include "media/MediaProbe.h"
+#include "media/PreviewFrameCache.h"
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
-
-extern "C"
-{
-#include <libavutil/frame.h>
-#include <libavutil/pixfmt.h>
-}
 
 namespace
 {
@@ -84,9 +82,8 @@ namespace
         return 1;
     }
 
-    const AVFrame* RgbaFrame(const void* nativeFrame, int width, int height)
+    const AVFrame* RgbaFrame(const AVFrame* frame, int width, int height)
     {
-        const auto* frame = static_cast<const AVFrame*>(nativeFrame);
         return frame && frame->format == AV_PIX_FMT_RGBA
             && frame->width == width && frame->height == height && frame->data[0]
             ? frame : nullptr;
@@ -128,14 +125,23 @@ int main()
     {
         return Fail("still-image probe", error);
     }
-    weasel::PreviewFrame imagePreview;
-    if (!weasel::MediaProbe::readPreviewFrame(imageInput, 0.0, 4,
-                                               imagePreview, error)
-        || imagePreview.width != 4 || imagePreview.height != 3
-        || imagePreview.rgba.size() != 4 * 3 * 4)
+    weasel::PreviewFrameCache previewCache;
+    previewCache.request(imageInput, 0.0, 4, 1, false, true, true);
+    std::shared_ptr<const weasel::MediaDecodedFrame> imagePreview;
+    for (int attempt = 0; attempt < 500 && !imagePreview; ++attempt)
     {
-        return Fail("still-image decode", error);
+        imagePreview = previewCache.find(imageInput, 0.0, 4, 1);
+        if (!imagePreview)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
+    if (!imagePreview || imagePreview->width != 4 || imagePreview->height != 3
+        || imagePreview->rgba.size() != 4 * 3 * 4)
+    {
+        return Fail("still-image decode", "preview cache did not publish the image frame");
+    }
+    previewCache.shutdown();
     weasel::SequenceRenderEntry stillEntry;
     stillEntry.includeVideo = true;
     stillEntry.asset = imageAsset;
@@ -150,7 +156,7 @@ int main()
     for (int index = 0; index < 3; ++index)
     {
         bool reachedEnd = false;
-        const void* nativeFrame = nullptr;
+        AVFrame* nativeFrame = nullptr;
         if (!stillSource.readNativeFrame(nativeFrame, reachedEnd, error) || reachedEnd
             || !RgbaFrame(nativeFrame, 64, 64))
         {
@@ -167,10 +173,10 @@ int main()
         return Fail("cropped alpha graph", error);
     }
     bool croppedReachedEnd = false;
-    const void* croppedNativeFrame = nullptr;
+    AVFrame* croppedNativeFrame = nullptr;
     if (!croppedStillSource.readNativeFrame(croppedNativeFrame, croppedReachedEnd, error)
         || croppedReachedEnd || !RgbaFrame(croppedNativeFrame, 4, 3)
-        || static_cast<const AVFrame*>(croppedNativeFrame)->data[0][1] < 100)
+        || croppedNativeFrame->data[0][1] < 100)
     {
         return Fail("cropped alpha frame", error.empty()
             ? "the crop obscured the lower layer" : error);
@@ -278,7 +284,7 @@ int main()
     for (int index = 0; index < 3; ++index)
     {
         bool reachedEnd = false;
-        const void* nativeFrame = nullptr;
+        AVFrame* nativeFrame = nullptr;
         if (!streamingSource.readNativeFrame(nativeFrame, reachedEnd, error) || reachedEnd
             || !RgbaFrame(nativeFrame, 64, 64))
         {
@@ -302,7 +308,7 @@ int main()
     for (int index = 0; index < 3; ++index)
     {
         bool reachedEnd = false;
-        const void* nativeFrame = nullptr;
+        AVFrame* nativeFrame = nullptr;
         if (!nativeSource.readNativeFrame(nativeFrame, reachedEnd, error)
             || reachedEnd || !nativeFrame
             || !streamedEncoder.writeNativeFrame(nativeFrame, index, error))

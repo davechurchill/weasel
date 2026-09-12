@@ -101,7 +101,7 @@ namespace weasel
         {
             return { nullptr, true };
         }
-        const std::shared_ptr<const PreviewFrame> frame = m_frames.find(asset.path,
+        const std::shared_ptr<const MediaDecodedFrame> frame = m_frames.find(asset.path,
                                                                           0.0,
                                                                           MaximumThumbnailEdge,
                                                                           streamId);

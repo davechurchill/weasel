@@ -31,6 +31,7 @@ namespace weasel
 
     void PreviewFrameCache::shutdown()
     {
+        m_cancelRequested.store(true, std::memory_order_release);
         {
             std::lock_guard lock(m_mutex);
             m_stopping = true;
@@ -380,6 +381,7 @@ namespace weasel
             PreviewFrameReadOptions options;
             options.forwardPlayback = request.allowForwardDecode;
             options.streamId = request.key.streamId;
+            options.cancelRequested = &m_cancelRequested;
             const bool decoded = MediaProbe::readPreviewFrame(
                 request.key.mediaPath,
                 static_cast<double>(request.key.sourceMicroseconds) / 1000000.0,

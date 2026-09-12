@@ -2,6 +2,7 @@
 
 #include "media/MediaProbe.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -20,9 +21,9 @@ namespace weasel
     };
 
     // A single decode worker shared by the sequence monitor and Media icons.
-    // It keeps the UI thread out of VideoCapture::set/read, retains a bounded
-    // LRU of decoded frames, and lets timeline requests supersede stale scrub
-    // positions.
+    // It keeps the UI thread out of libavformat seeking/decoding, retains a
+    // bounded LRU of decoded frames, and lets timeline requests supersede
+    // stale scrub positions.
     class PreviewFrameCache
     {
     private:
@@ -72,6 +73,7 @@ namespace weasel
         std::vector<CachedFrame> m_cachedFrames;
         std::vector<FailedFrame> m_failedFrames;
         std::thread              m_worker;
+        std::atomic_bool         m_cancelRequested = false;
         bool                     m_stopping = false;
         bool                     m_hasActiveRequest = false;
         FrameKey*                m_activeKey = nullptr;

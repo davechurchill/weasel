@@ -571,14 +571,13 @@ namespace weasel
         , m_editorState()
         , m_project(m_editorState.project())
         , m_timelineController(m_editorState.timeline())
-        , m_mediaImportController(m_applicationDirectory)
         , m_exportController(ExportController::ImGuiCallbacks{
             [this] { ApplyTheme(m_uiState.theme); },
             [] { UploadPendingImGuiFontAtlasUpdates(); }
         })
         , m_previewController(m_previewFrameCache)
         , m_mediaThumbnailController(m_previewFrameCache)
-        , m_sequenceAudioController(m_applicationDirectory, m_editorState.cacheDirectory())
+        , m_sequenceAudioController(m_editorState.cacheDirectory())
         , m_selectedAssetId(m_timelineController.selection().assetId)
     {
         m_imguiInitialized = ImGui::SFML::Init(m_window);
@@ -2585,7 +2584,6 @@ namespace weasel
                     MediaAsset probedAsset;
                     std::string probeError;
                     if (MediaProbe::probe(asset->path,
-                                          m_mediaImportController.ffprobePath(),
                                           probedAsset,
                                           probeError,
                                           MediaKind::Video)
@@ -2641,10 +2639,12 @@ namespace weasel
             output = m_editorState.exportDirectory() / (*stem + ".mp4");
         }
 
+        const std::vector<SequenceRenderEntry> cachedAudioEntries =
+            m_sequenceAudioController.cachedAudioEntries();
         if (m_exportController.startExport(m_window,
                                            m_editorState.project(),
-                                           FindMediaTool(m_applicationDirectory, "ffmpeg"),
                                            output,
+                                           cachedAudioEntries,
                                            error))
         {
             // Keep encoding activity separate from the editing panels.

@@ -39,7 +39,7 @@ if [ -z "$PREFIX" ]; then
 fi
 
 echo "==> Installing packaged dependencies with Homebrew..."
-brew install cmake ninja pkg-config sfml opencv nlohmann-json ffmpeg
+brew install cmake ninja pkg-config sfml nlohmann-json ffmpeg
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git was not found after checking the Xcode Command Line Tools." >&2

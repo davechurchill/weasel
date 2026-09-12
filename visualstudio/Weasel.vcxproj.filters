@@ -29,7 +29,6 @@
     <ClCompile Include="..\src\media\PreviewFrameCache.cpp"><Filter>media</Filter></ClCompile>
     <ClCompile Include="..\src\app\RecentProjects.cpp"><Filter>app</Filter></ClCompile>
     <ClCompile Include="..\src\media\AudioWaveformCache.cpp"><Filter>media</Filter></ClCompile>
-    <ClCompile Include="..\src\render\AudioGraphBuilder.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\SequenceAudioController.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\SequenceAudioRenderer.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\SequenceRenderPlan.cpp"><Filter>render</Filter></ClCompile>
@@ -38,9 +37,7 @@
     <ClCompile Include="..\src\render\VideoRenderer.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoExporter.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoCompositor.cpp"><Filter>render</Filter></ClCompile>
-    <ClCompile Include="..\src\platform\ProcessUtils.cpp"><Filter>platform</Filter></ClCompile>
-    <ClCompile Include="..\src\media\FfmpegProcess.cpp"><Filter>media</Filter></ClCompile>
-    <ClCompile Include="..\src\platform\ProcessRunner.cpp"><Filter>platform</Filter></ClCompile>
+    <ClCompile Include="..\src\media\FfmpegBackend.cpp"><Filter>media</Filter></ClCompile>
     <ClCompile Include="..\src\media\MediaTools.cpp"><Filter>media</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -67,7 +64,6 @@
     <ClInclude Include="..\src\media\PreviewFrameCache.h"><Filter>media</Filter></ClInclude>
     <ClInclude Include="..\src\app\RecentProjects.h"><Filter>app</Filter></ClInclude>
     <ClInclude Include="..\src\media\AudioWaveformCache.h"><Filter>media</Filter></ClInclude>
-    <ClInclude Include="..\src\render\AudioGraphBuilder.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\SequenceAudioController.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\SequenceAudioRenderer.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\SequenceRenderPlan.h"><Filter>render</Filter></ClInclude>
@@ -77,9 +73,7 @@
     <ClInclude Include="..\src\render\VideoRenderer.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\VideoExporter.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\VideoCompositor.h"><Filter>render</Filter></ClInclude>
-    <ClInclude Include="..\src\platform\ProcessUtils.h"><Filter>platform</Filter></ClInclude>
-    <ClInclude Include="..\src\media\FfmpegProcess.h"><Filter>media</Filter></ClInclude>
-    <ClInclude Include="..\src\platform\ProcessRunner.h"><Filter>platform</Filter></ClInclude>
+    <ClInclude Include="..\src\media\FfmpegBackend.h"><Filter>media</Filter></ClInclude>
     <ClInclude Include="..\src\media\MediaTools.h"><Filter>media</Filter></ClInclude>
   </ItemGroup>
 </Project>

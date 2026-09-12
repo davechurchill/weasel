@@ -63,8 +63,8 @@ namespace weasel
         // cannot observe concurrent editor mutations.
         [[nodiscard]] bool startExport(sf::RenderWindow& mainWindow,
                                        const ProjectData& project,
-                                       const std::filesystem::path& ffmpegPath,
                                        const std::filesystem::path& outputPath,
+                                       const std::vector<SequenceRenderEntry>& cachedAudioEntries,
                                        std::string& error);
 
         // Brings an already-open progress window forward, or reopens it after

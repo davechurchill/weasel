@@ -25,8 +25,9 @@ echo "==> Installing Ubuntu packages (sudo)..."
 sudo apt update
 sudo apt install -y \
   build-essential cmake git pkg-config ninja-build zlib1g-dev \
-  libopencv-dev nlohmann-json3-dev \
-  ffmpeg zenity
+  nlohmann-json3-dev \
+  libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev \
+  libswresample-dev libswscale-dev zenity
 
 if [ ! -f "$SFML_INSTALL_SCRIPT" ]; then
   echo "SFML installer not found: $SFML_INSTALL_SCRIPT" >&2
@@ -87,5 +88,5 @@ CMAKE_PREFIX_PATH, for example:
     -DCMAKE_PREFIX_PATH="$PREFIX"
   cmake --build build/native --parallel "$JOBS"
 
-FFmpeg and ffprobe were installed from APT and are discovered through PATH.
+FFmpeg development libraries were installed from APT and are linked into Weasel.
 EOF

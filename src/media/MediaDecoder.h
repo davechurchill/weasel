@@ -1,19 +1,22 @@
 #pragma once
 
-#include <opencv2/core/mat.hpp>
-
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace weasel
 {
     struct MediaDecodedFrame
     {
-        cv::Mat       rgba;
+        std::vector<std::uint8_t> rgba;
+        int           width = 0;
+        int           height = 0;
+        int           strideBytes = 0;
         std::uint64_t serial = 0;
     };
 
@@ -28,11 +31,12 @@ namespace weasel
         int                   maximumOutputEdge = 0;
         bool                  isStillImage = false;
         bool                  allowForwardDecode = true;
+        std::atomic_bool*     cancelRequested = nullptr;
     };
 
-    // Owns independent OpenCV cursors for the media streams requested by one
-    // consumer. Preview and export use separate instances, so they never
-    // contend for a decoder while sharing the same decode behavior.
+    // Owns independent libavformat/libavcodec cursors for the media streams
+    // requested by one consumer. Preview and export use separate instances,
+    // so they never contend for a decoder while sharing decode behavior.
     class MediaDecoder
     {
     private:

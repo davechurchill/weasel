@@ -20,16 +20,10 @@ if errorlevel 1 exit /b 1
 cmake -E make_directory "%DIST_DIR%"
 if errorlevel 1 exit /b 1
 
-cmake -E make_directory "%PACKAGE_DIR%\ffmpeg"
+cmake -E make_directory "%PACKAGE_DIR%"
 if errorlevel 1 exit /b 1
 
 cmake -E copy_if_different "%PROJECT_DIR%\bin\Weasel.exe" "%PACKAGE_DIR%\Weasel.exe"
-if errorlevel 1 exit /b 1
-
-cmake -E copy_if_different "%PROJECT_DIR%\tools\ffmpeg\ffmpeg.exe" "%PACKAGE_DIR%\ffmpeg\ffmpeg.exe"
-if errorlevel 1 exit /b 1
-
-cmake -E copy_if_different "%PROJECT_DIR%\tools\ffmpeg\ffprobe.exe" "%PACKAGE_DIR%\ffmpeg\ffprobe.exe"
 if errorlevel 1 exit /b 1
 
 cmake -E copy_if_different "%PROJECT_DIR%\LICENSE" "%PACKAGE_DIR%\LICENSE"

@@ -554,10 +554,8 @@ namespace weasel
         m_mixer->setPlayingOffset(sf::seconds(static_cast<float>(clampSourceTime(sourceSeconds))));
     }
 
-    SequenceAudioController::SequenceAudioController(std::filesystem::path applicationDirectory,
-                                                     std::filesystem::path cacheDirectory)
-        : m_applicationDirectory(std::move(applicationDirectory))
-        , m_cacheDirectory(std::move(cacheDirectory))
+    SequenceAudioController::SequenceAudioController(std::filesystem::path cacheDirectory)
+        : m_cacheDirectory(std::move(cacheDirectory))
         , m_playback(std::make_unique<Playback>())
     {
     }
@@ -754,7 +752,6 @@ namespace weasel
             {
                 std::string startError;
                 if (m_renderer.start(missing->entry,
-                                     ffmpegPath(),
                                      missing->cachePath,
                                      startError))
                 {
@@ -865,14 +862,45 @@ namespace weasel
         return m_allClipsReady;
     }
 
+    std::vector<SequenceRenderEntry> SequenceAudioController::cachedAudioEntries() const
+    {
+        std::vector<SequenceRenderEntry> entries;
+        if (!m_allClipsReady || m_clipTargets.empty())
+        {
+            return entries;
+        }
+        entries.reserve(m_clipTargets.size());
+        for (const ClipCacheTarget& target : m_clipTargets)
+        {
+            if (!UsableAudioCache(target.cachePath))
+            {
+                entries.clear();
+                return entries;
+            }
+            SequenceRenderEntry cached = target.entry;
+            const double duration = cached.clip.duration();
+            cached.asset.path = target.cachePath;
+            cached.asset.name = target.cachePath.filename().string();
+            cached.asset.kind = MediaKind::Audio;
+            cached.asset.duration = duration;
+            cached.asset.width = 0;
+            cached.asset.height = 0;
+            cached.asset.videoBitrateKbps = 0;
+            cached.asset.hasAudio = true;
+            cached.clip.sourceIn = 0.0;
+            cached.clip.sourceOut = duration;
+            cached.clip.speed = 1.0;
+            cached.clip.audio = {};
+            cached.includeVideo = false;
+            cached.includeAudio = true;
+            entries.push_back(std::move(cached));
+        }
+        return entries;
+    }
+
     const std::string& SequenceAudioController::error() const noexcept
     {
         return m_error;
-    }
-
-    std::filesystem::path SequenceAudioController::ffmpegPath() const
-    {
-        return FindMediaTool(m_applicationDirectory, "ffmpeg");
     }
 
     bool SequenceAudioController::refreshPlayback()
@@ -960,7 +988,6 @@ namespace weasel
                                    asset.path,
                                    asset.duration,
                                    sourceRanges,
-                                   ffmpegPath(),
                                    m_cacheDirectory);
     }
 

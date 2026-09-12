@@ -1,76 +1,163 @@
 #include "media/MediaDecoder.h"
 
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/videoio.hpp>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <string>
+#include <limits>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/display.h>
+#include <libavutil/error.h>
+#include <libswscale/swscale.h>
+}
+
 namespace
 {
-    bool ConvertToRgba(const cv::Mat& decoded, cv::Mat& rgba, std::string& error)
+    std::string Utf8Path(const std::filesystem::path& path)
     {
-        if (decoded.empty())
+#if defined(_WIN32)
+        const std::u8string value = path.u8string();
+        return { reinterpret_cast<const char*>(value.data()), value.size() };
+#else
+        return path.string();
+#endif
+    }
+
+    std::string AvError(int code)
+    {
+        std::array<char, AV_ERROR_MAX_STRING_SIZE> text{};
+        av_strerror(code, text.data(), text.size());
+        return text.data();
+    }
+
+    int InterruptRead(void* opaque)
+    {
+        const auto* cancelled = static_cast<const std::atomic_bool*>(opaque);
+        return cancelled && cancelled->load(std::memory_order_acquire) ? 1 : 0;
+    }
+
+    struct FormatDeleter
+    {
+        void operator()(AVFormatContext* context) const noexcept
         {
-            error = "The media decoder returned an empty frame.";
-            return false;
+            avformat_close_input(&context);
+        }
+    };
+
+    struct CodecDeleter
+    {
+        void operator()(AVCodecContext* context) const noexcept
+        {
+            avcodec_free_context(&context);
+        }
+    };
+
+    struct FrameDeleter
+    {
+        void operator()(AVFrame* frame) const noexcept
+        {
+            av_frame_free(&frame);
+        }
+    };
+
+    struct PacketDeleter
+    {
+        void operator()(AVPacket* packet) const noexcept
+        {
+            av_packet_free(&packet);
+        }
+    };
+
+    using FormatPtr = std::unique_ptr<AVFormatContext, FormatDeleter>;
+    using CodecPtr = std::unique_ptr<AVCodecContext, CodecDeleter>;
+    using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
+    using PacketPtr = std::unique_ptr<AVPacket, PacketDeleter>;
+
+    int NormalizeDegrees(int value)
+    {
+        value %= 360;
+        if (value < 0)
+        {
+            value += 360;
+        }
+        return value;
+    }
+
+    int StreamRotationDegrees(const AVStream* stream)
+    {
+        const AVPacketSideData* sideData = av_packet_side_data_get(
+            stream->codecpar->coded_side_data,
+            stream->codecpar->nb_coded_side_data,
+            AV_PKT_DATA_DISPLAYMATRIX);
+        if (!sideData || sideData->size < 9 * sizeof(std::int32_t))
+        {
+            return 0;
+        }
+        const auto* matrix = reinterpret_cast<const std::int32_t*>(sideData->data);
+        const double counterClockwise = av_display_rotation_get(matrix);
+        if (!std::isfinite(counterClockwise))
+        {
+            return 0;
+        }
+        return NormalizeDegrees(static_cast<int>(std::llround(-counterClockwise / 90.0)) * 90);
+    }
+
+    void RotateRgba(const std::vector<std::uint8_t>& source,
+                    int sourceWidth,
+                    int sourceHeight,
+                    int rotation,
+                    weasel::MediaDecodedFrame& output)
+    {
+        rotation = NormalizeDegrees(rotation);
+        if (rotation == 0)
+        {
+            output.width = sourceWidth;
+            output.height = sourceHeight;
+            output.strideBytes = sourceWidth * 4;
+            output.rgba = source;
+            return;
         }
 
-        cv::Mat eightBit;
-        if (decoded.depth() == CV_8U)
+        output.width = rotation == 180 ? sourceWidth : sourceHeight;
+        output.height = rotation == 180 ? sourceHeight : sourceWidth;
+        output.strideBytes = output.width * 4;
+        output.rgba.resize(static_cast<std::size_t>(output.strideBytes) * output.height);
+        for (int sourceY = 0; sourceY < sourceHeight; ++sourceY)
         {
-            eightBit = decoded;
-        }
-        else
-        {
-            double scale = 1.0;
-            if (decoded.depth() == CV_16U)
+            for (int sourceX = 0; sourceX < sourceWidth; ++sourceX)
             {
-                scale = 1.0 / 257.0;
+                int destinationX = sourceX;
+                int destinationY = sourceY;
+                if (rotation == 90)
+                {
+                    destinationX = sourceHeight - 1 - sourceY;
+                    destinationY = sourceX;
+                }
+                else if (rotation == 180)
+                {
+                    destinationX = sourceWidth - 1 - sourceX;
+                    destinationY = sourceHeight - 1 - sourceY;
+                }
+                else
+                {
+                    destinationX = sourceY;
+                    destinationY = sourceWidth - 1 - sourceX;
+                }
+                const std::size_t sourceOffset =
+                    (static_cast<std::size_t>(sourceY) * sourceWidth + sourceX) * 4;
+                const std::size_t destinationOffset =
+                    (static_cast<std::size_t>(destinationY) * output.width + destinationX) * 4;
+                std::copy_n(source.data() + sourceOffset, 4,
+                            output.rgba.data() + destinationOffset);
             }
-            else if (decoded.depth() == CV_32F || decoded.depth() == CV_64F)
-            {
-                scale = 255.0;
-            }
-            decoded.convertTo(eightBit, CV_MAKETYPE(CV_8U, decoded.channels()), scale);
         }
-
-        if (eightBit.channels() == 4)
-        {
-            cv::cvtColor(eightBit, rgba, cv::COLOR_BGRA2RGBA);
-        }
-        else if (eightBit.channels() == 3)
-        {
-            cv::cvtColor(eightBit, rgba, cv::COLOR_BGR2RGBA);
-        }
-        else if (eightBit.channels() == 2)
-        {
-            cv::Mat gray;
-            cv::Mat alpha;
-            cv::extractChannel(eightBit, gray, 0);
-            cv::extractChannel(eightBit, alpha, 1);
-            cv::cvtColor(gray, rgba, cv::COLOR_GRAY2RGBA);
-            cv::insertChannel(alpha, rgba, 3);
-        }
-        else if (eightBit.channels() == 1)
-        {
-            cv::cvtColor(eightBit, rgba, cv::COLOR_GRAY2RGBA);
-        }
-        else
-        {
-            error = "The decoded frame uses an unsupported pixel format.";
-            return false;
-        }
-        if (!rgba.isContinuous())
-        {
-            rgba = rgba.clone();
-        }
-        return true;
     }
 }
 
@@ -82,17 +169,95 @@ namespace weasel
         struct Decoder
         {
             std::filesystem::path path;
-            cv::VideoCapture      capture;
-            cv::Mat               sourceRgba;
+            FormatPtr             format;
+            CodecPtr              codec;
+            FramePtr              decoded{ av_frame_alloc() };
+            FramePtr              incoming{ av_frame_alloc() };
+            PacketPtr             packet{ av_packet_alloc() };
+            AVStream*             stream = nullptr;
+            int                   streamIndex = -1;
+            SwsContext*           converter = nullptr;
+            std::vector<std::uint8_t> converted;
             MediaDecodedFrame     frame;
-            long long             decodedFrameIndex = -1;
-            long long             frameCount = 0;
+            double                decodedTime = -1.0;
+            double                requestedTime = -1.0;
+            double                sourceFps = 0.0;
             int                   orientationDegrees = 0;
-            int                   maximumOutputEdge = 0;
+            int                   maximumOutputEdge = -1;
             std::uint64_t         lastUse = 0;
-            bool                  orientationAutoEnabled = false;
+            bool                  draining = false;
+            bool                  reachedEnd = false;
             bool                  stillLoaded = false;
             bool                  isStillImage = false;
+
+            Decoder() = default;
+            Decoder(const Decoder&) = delete;
+            Decoder& operator=(const Decoder&) = delete;
+            Decoder(Decoder&& other) noexcept
+                : path(std::move(other.path))
+                , format(std::move(other.format))
+                , codec(std::move(other.codec))
+                , decoded(std::move(other.decoded))
+                , incoming(std::move(other.incoming))
+                , packet(std::move(other.packet))
+                , stream(other.stream)
+                , streamIndex(other.streamIndex)
+                , converter(std::exchange(other.converter, nullptr))
+                , converted(std::move(other.converted))
+                , frame(std::move(other.frame))
+                , decodedTime(other.decodedTime)
+                , requestedTime(other.requestedTime)
+                , sourceFps(other.sourceFps)
+                , orientationDegrees(other.orientationDegrees)
+                , maximumOutputEdge(other.maximumOutputEdge)
+                , lastUse(other.lastUse)
+                , draining(other.draining)
+                , reachedEnd(other.reachedEnd)
+                , stillLoaded(other.stillLoaded)
+                , isStillImage(other.isStillImage)
+            {
+            }
+
+            Decoder& operator=(Decoder&& other) noexcept
+            {
+                if (this != &other)
+                {
+                    if (converter)
+                    {
+                        sws_freeContext(converter);
+                    }
+                    path = std::move(other.path);
+                    format = std::move(other.format);
+                    codec = std::move(other.codec);
+                    decoded = std::move(other.decoded);
+                    incoming = std::move(other.incoming);
+                    packet = std::move(other.packet);
+                    stream = other.stream;
+                    streamIndex = other.streamIndex;
+                    converter = std::exchange(other.converter, nullptr);
+                    converted = std::move(other.converted);
+                    frame = std::move(other.frame);
+                    decodedTime = other.decodedTime;
+                    requestedTime = other.requestedTime;
+                    sourceFps = other.sourceFps;
+                    orientationDegrees = other.orientationDegrees;
+                    maximumOutputEdge = other.maximumOutputEdge;
+                    lastUse = other.lastUse;
+                    draining = other.draining;
+                    reachedEnd = other.reachedEnd;
+                    stillLoaded = other.stillLoaded;
+                    isStillImage = other.isStillImage;
+                }
+                return *this;
+            }
+
+            ~Decoder()
+            {
+                if (converter)
+                {
+                    sws_freeContext(converter);
+                }
+            }
         };
 
         std::unordered_map<std::uint64_t, Decoder> m_decoders;
@@ -100,115 +265,359 @@ namespace weasel
         std::uint64_t                               m_useCounter = 0;
         std::size_t                                 m_maximumCachedStreams = 0;
 
-        static void reset(Decoder& decoder, const MediaDecodeRequest& request)
-        {
-            decoder.capture.release();
-            decoder.path = request.path;
-            decoder.sourceRgba.release();
-            decoder.frame = {};
-            decoder.decodedFrameIndex = -1;
-            decoder.frameCount = 0;
-            decoder.orientationDegrees = 0;
-            decoder.maximumOutputEdge = 0;
-            decoder.orientationAutoEnabled = false;
-            decoder.stillLoaded = false;
-            decoder.isStillImage = request.isStillImage;
-        }
-
         static bool sameSource(const Decoder& decoder, const MediaDecodeRequest& request)
         {
-            return decoder.path == request.path && decoder.isStillImage == request.isStillImage;
+            return decoder.path == request.path
+                && decoder.isStillImage == request.isStillImage;
         }
 
-        bool updateOutput(Decoder& decoder, int maximumOutputEdge)
+        static void reset(Decoder& decoder, const MediaDecodeRequest& request)
         {
-            maximumOutputEdge = std::max(0, maximumOutputEdge);
-            if (decoder.frame.serial != 0 && decoder.maximumOutputEdge == maximumOutputEdge)
+            Decoder fresh;
+            fresh.path = request.path;
+            fresh.isStillImage = request.isStillImage;
+            decoder = std::move(fresh);
+        }
+
+        static bool open(Decoder& decoder, const MediaDecodeRequest& request,
+                         std::string& error)
+        {
+            if (decoder.format && decoder.codec)
+            {
+                return true;
+            }
+            AVFormatContext* rawFormat = avformat_alloc_context();
+            if (!rawFormat)
+            {
+                error = "Could not allocate the FFmpeg media reader.";
+                return false;
+            }
+            if (request.cancelRequested)
+            {
+                rawFormat->interrupt_callback = { InterruptRead, request.cancelRequested };
+            }
+            const std::string path = Utf8Path(request.path);
+            int result = avformat_open_input(&rawFormat, path.c_str(), nullptr, nullptr);
+            if (result < 0)
+            {
+                if (rawFormat)
+                {
+                    avformat_free_context(rawFormat);
+                }
+                error = "FFmpeg could not open '" + request.path.filename().string()
+                    + "': " + AvError(result);
+                return false;
+            }
+            decoder.format.reset(rawFormat);
+            if ((result = avformat_find_stream_info(decoder.format.get(), nullptr)) < 0)
+            {
+                error = "FFmpeg could not inspect '" + request.path.filename().string()
+                    + "': " + AvError(result);
+                return false;
+            }
+            const AVCodec* codec = nullptr;
+            decoder.streamIndex = av_find_best_stream(decoder.format.get(), AVMEDIA_TYPE_VIDEO,
+                                                       -1, -1, &codec, 0);
+            if (decoder.streamIndex < 0 || !codec)
+            {
+                error = "FFmpeg did not find a decodable video or image stream in '"
+                    + request.path.filename().string() + "'.";
+                return false;
+            }
+            decoder.stream = decoder.format->streams[decoder.streamIndex];
+            decoder.codec.reset(avcodec_alloc_context3(codec));
+            if (!decoder.codec)
+            {
+                error = "Could not allocate the FFmpeg video decoder.";
+                return false;
+            }
+            if ((result = avcodec_parameters_to_context(decoder.codec.get(),
+                                                         decoder.stream->codecpar)) < 0
+                || (result = avcodec_open2(decoder.codec.get(), codec, nullptr)) < 0)
+            {
+                error = "FFmpeg could not initialize the video decoder: " + AvError(result);
+                return false;
+            }
+            decoder.orientationDegrees = StreamRotationDegrees(decoder.stream);
+            const AVRational rate = av_guess_frame_rate(decoder.format.get(), decoder.stream, nullptr);
+            decoder.sourceFps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : request.sourceFps;
+            error.clear();
+            return true;
+        }
+
+        static bool decodeNext(Decoder& decoder, bool& produced, std::string& error)
+        {
+            produced = false;
+            if (decoder.reachedEnd)
+            {
+                return true;
+            }
+            while (true)
+            {
+                av_frame_unref(decoder.incoming.get());
+                int result = avcodec_receive_frame(decoder.codec.get(), decoder.incoming.get());
+                if (result == 0)
+                {
+                    av_frame_unref(decoder.decoded.get());
+                    av_frame_move_ref(decoder.decoded.get(), decoder.incoming.get());
+                    produced = true;
+                    return true;
+                }
+                if (result == AVERROR_EOF)
+                {
+                    decoder.reachedEnd = true;
+                    return true;
+                }
+                if (result != AVERROR(EAGAIN))
+                {
+                    error = "FFmpeg video decoding failed: " + AvError(result);
+                    return false;
+                }
+
+                bool submitted = false;
+                while (!submitted && !decoder.draining)
+                {
+                    av_packet_unref(decoder.packet.get());
+                    result = av_read_frame(decoder.format.get(), decoder.packet.get());
+                    if (result == AVERROR_EOF)
+                    {
+                        result = avcodec_send_packet(decoder.codec.get(), nullptr);
+                        decoder.draining = true;
+                        if (result < 0 && result != AVERROR_EOF)
+                        {
+                            error = "FFmpeg could not drain the video decoder: " + AvError(result);
+                            return false;
+                        }
+                        submitted = true;
+                    }
+                    else if (result < 0)
+                    {
+                        error = "FFmpeg could not read a video packet: " + AvError(result);
+                        return false;
+                    }
+                    else if (decoder.packet->stream_index == decoder.streamIndex)
+                    {
+                        result = avcodec_send_packet(decoder.codec.get(), decoder.packet.get());
+                        if (result < 0 && result != AVERROR(EAGAIN))
+                        {
+                            error = "FFmpeg could not submit a video packet: " + AvError(result);
+                            return false;
+                        }
+                        submitted = true;
+                    }
+                }
+                if (decoder.draining && !submitted)
+                {
+                    decoder.reachedEnd = true;
+                    return true;
+                }
+            }
+        }
+
+        static double frameTime(const Decoder& decoder)
+        {
+            std::int64_t timestamp = decoder.decoded->best_effort_timestamp;
+            if (timestamp == AV_NOPTS_VALUE)
+            {
+                timestamp = decoder.decoded->pts;
+            }
+            if (timestamp == AV_NOPTS_VALUE)
+            {
+                return decoder.decodedTime < 0.0
+                    ? 0.0
+                    : decoder.decodedTime + 1.0 / std::max(1.0, decoder.sourceFps);
+            }
+            const std::int64_t start = decoder.stream->start_time == AV_NOPTS_VALUE
+                ? 0 : decoder.stream->start_time;
+            return std::max(0.0, static_cast<double>(timestamp - start)
+                * av_q2d(decoder.stream->time_base));
+        }
+
+        static bool seek(Decoder& decoder, double seconds, std::string& error)
+        {
+            const std::int64_t start = decoder.stream->start_time == AV_NOPTS_VALUE
+                ? 0 : decoder.stream->start_time;
+            const std::int64_t target = start + av_rescale_q(
+                static_cast<std::int64_t>(std::llround(std::max(0.0, seconds) * AV_TIME_BASE)),
+                AV_TIME_BASE_Q, decoder.stream->time_base);
+            int result = avformat_seek_file(decoder.format.get(), decoder.streamIndex,
+                                            std::numeric_limits<std::int64_t>::min(),
+                                            target, target, AVSEEK_FLAG_BACKWARD);
+            if (result < 0)
+            {
+                result = av_seek_frame(decoder.format.get(), decoder.streamIndex,
+                                       target, AVSEEK_FLAG_BACKWARD);
+            }
+            if (result < 0)
+            {
+                error = "FFmpeg could not seek in the source video: " + AvError(result);
+                return false;
+            }
+            avcodec_flush_buffers(decoder.codec.get());
+            decoder.draining = false;
+            decoder.reachedEnd = false;
+            decoder.decodedTime = -1.0;
+            return true;
+        }
+
+        bool updateOutput(Decoder& decoder, const MediaDecodeRequest& request,
+                          std::string& error)
+        {
+            if (!decoder.decoded || decoder.decoded->width <= 0 || decoder.decoded->height <= 0)
+            {
+                error = "The FFmpeg video decoder returned an empty frame.";
+                return false;
+            }
+            if (decoder.frame.serial != 0
+                && decoder.maximumOutputEdge == request.maximumOutputEdge)
             {
                 return true;
             }
 
-            if (maximumOutputEdge > 0
-                && std::max(decoder.sourceRgba.cols, decoder.sourceRgba.rows) > maximumOutputEdge)
+            int rotation = decoder.orientationDegrees;
+            if (rotation == 0 && request.displayWidth > 0 && request.displayHeight > 0
+                && request.displayWidth == decoder.decoded->height
+                && request.displayHeight == decoder.decoded->width
+                && request.displayWidth != request.displayHeight)
             {
-                const double scale = static_cast<double>(maximumOutputEdge)
-                    / static_cast<double>(std::max(decoder.sourceRgba.cols, decoder.sourceRgba.rows));
-                cv::resize(decoder.sourceRgba, decoder.frame.rgba, cv::Size(), scale, scale, cv::INTER_AREA);
+                rotation = 90;
             }
-            else
+            const bool quarterTurn = rotation == 90 || rotation == 270;
+            const int displayWidth = quarterTurn ? decoder.decoded->height : decoder.decoded->width;
+            const int displayHeight = quarterTurn ? decoder.decoded->width : decoder.decoded->height;
+            double scale = 1.0;
+            if (request.maximumOutputEdge > 0
+                && std::max(displayWidth, displayHeight) > request.maximumOutputEdge)
             {
-                decoder.frame.rgba = decoder.sourceRgba;
+                scale = static_cast<double>(request.maximumOutputEdge)
+                    / std::max(displayWidth, displayHeight);
             }
-            if (!decoder.frame.rgba.isContinuous())
+            const int convertedWidth = std::max(1,
+                static_cast<int>(std::lround(decoder.decoded->width * scale)));
+            const int convertedHeight = std::max(1,
+                static_cast<int>(std::lround(decoder.decoded->height * scale)));
+            decoder.converter = sws_getCachedContext(
+                decoder.converter,
+                decoder.decoded->width,
+                decoder.decoded->height,
+                static_cast<AVPixelFormat>(decoder.decoded->format),
+                convertedWidth,
+                convertedHeight,
+                AV_PIX_FMT_RGBA,
+                request.maximumOutputEdge > 0 ? SWS_AREA : SWS_BILINEAR,
+                nullptr, nullptr, nullptr);
+            if (!decoder.converter)
             {
-                decoder.frame.rgba = decoder.frame.rgba.clone();
+                error = "Could not initialize FFmpeg's preview pixel converter.";
+                return false;
             }
-            decoder.maximumOutputEdge = maximumOutputEdge;
+            const int stride = convertedWidth * 4;
+            decoder.converted.resize(static_cast<std::size_t>(stride) * convertedHeight);
+            std::uint8_t* destination[] = { decoder.converted.data() };
+            const int destinationStride[] = { stride };
+            const int rows = sws_scale(decoder.converter,
+                                       decoder.decoded->data,
+                                       decoder.decoded->linesize,
+                                       0,
+                                       decoder.decoded->height,
+                                       destination,
+                                       destinationStride);
+            if (rows != convertedHeight)
+            {
+                error = "FFmpeg could not convert the decoded video frame to RGBA.";
+                return false;
+            }
+            RotateRgba(decoder.converted, convertedWidth, convertedHeight,
+                       rotation, decoder.frame);
+            decoder.maximumOutputEdge = request.maximumOutputEdge;
             decoder.frame.serial = m_nextSerial++;
+            error.clear();
             return true;
         }
 
-        bool loadStill(Decoder& decoder, const MediaDecodeRequest& request, std::string& error)
+        const MediaDecodedFrame* readDecoder(Decoder& decoder,
+                                             const MediaDecodeRequest& request,
+                                             std::string& error)
         {
-            if (decoder.stillLoaded)
+            if (request.cancelRequested
+                && request.cancelRequested->load(std::memory_order_acquire))
             {
-                return updateOutput(decoder, request.maximumOutputEdge);
+                error = "Operation cancelled.";
+                return nullptr;
             }
-
-            const cv::Mat decoded = cv::imread(request.path.string(), cv::IMREAD_UNCHANGED);
-            if (!ConvertToRgba(decoded, decoder.sourceRgba, error))
+            if (!open(decoder, request, error))
             {
-                error = "Could not decode image '" + request.path.filename().string() + "': " + error;
-                return false;
+                return nullptr;
             }
-            decoder.stillLoaded = true;
-            return updateOutput(decoder, request.maximumOutputEdge);
-        }
-
-        bool openVideo(Decoder& decoder, const MediaDecodeRequest& request, std::string& error)
-        {
-            if (!decoder.capture.isOpened())
+            decoder.format->interrupt_callback = request.cancelRequested
+                ? AVIOInterruptCB{ InterruptRead, request.cancelRequested }
+                : AVIOInterruptCB{};
+            if (request.isStillImage)
             {
-                decoder.capture.open(request.path.string());
-                decoder.orientationDegrees = static_cast<int>(std::lround(
-                    decoder.capture.get(cv::CAP_PROP_ORIENTATION_META)));
-                decoder.orientationAutoEnabled = decoder.capture.set(cv::CAP_PROP_ORIENTATION_AUTO, 1.0);
-                const double reportedFrameCount = decoder.capture.get(cv::CAP_PROP_FRAME_COUNT);
-                if (std::isfinite(reportedFrameCount) && reportedFrameCount >= 1.0)
+                if (!decoder.stillLoaded)
                 {
-                    decoder.frameCount = std::max(1LL, std::llround(reportedFrameCount));
+                    bool produced = false;
+                    if (!decodeNext(decoder, produced, error) || !produced)
+                    {
+                        if (error.empty())
+                        {
+                            error = "FFmpeg could not decode the still image.";
+                        }
+                        return nullptr;
+                    }
+                    decoder.stillLoaded = true;
+                    decoder.decodedTime = 0.0;
+                    decoder.frame.serial = 0;
+                }
+                return updateOutput(decoder, request, error) ? &decoder.frame : nullptr;
+            }
+
+            const double target = std::max(0.0, request.sourceTime);
+            const double fps = request.sourceFps > 0.0
+                ? request.sourceFps : std::max(1.0, decoder.sourceFps);
+            const double tolerance = 0.45 / fps;
+            if (decoder.frame.serial != 0
+                && std::abs(target - decoder.requestedTime) <= tolerance)
+            {
+                return updateOutput(decoder, request, error) ? &decoder.frame : nullptr;
+            }
+
+            const bool canContinue = request.allowForwardDecode
+                && decoder.decodedTime >= 0.0
+                && target + tolerance >= decoder.decodedTime
+                && target - decoder.decodedTime <= 90.0 / fps;
+            if (!canContinue && (decoder.decodedTime >= 0.0 || target > tolerance))
+            {
+                if (!seek(decoder, target, error))
+                {
+                    return nullptr;
                 }
             }
-            if (!decoder.capture.isOpened())
-            {
-                error = "OpenCV could not open video '" + request.path.filename().string() + "'.";
-                return false;
-            }
-            return true;
-        }
 
-        static void applyOrientation(Decoder& decoder, const MediaDecodeRequest& request, cv::Mat& decoded)
-        {
-            const int normalizedOrientation = ((decoder.orientationDegrees % 360) + 360) % 360;
-            const bool dimensionsNeedQuarterTurn = request.displayWidth == decoded.rows
-                && request.displayHeight == decoded.cols
-                && request.displayWidth != request.displayHeight;
-            if ((!decoder.orientationAutoEnabled || dimensionsNeedQuarterTurn)
-                && (normalizedOrientation == 90 || normalizedOrientation == 270 || dimensionsNeedQuarterTurn))
+            bool haveFrame = decoder.decodedTime >= 0.0;
+            while (!haveFrame || decoder.decodedTime + tolerance < target)
             {
-                cv::Mat rotated;
-                const int rotation = normalizedOrientation == 270
-                    ? cv::ROTATE_90_COUNTERCLOCKWISE
-                    : cv::ROTATE_90_CLOCKWISE;
-                cv::rotate(decoded, rotated, rotation);
-                decoded = std::move(rotated);
+                bool produced = false;
+                if (!decodeNext(decoder, produced, error))
+                {
+                    return nullptr;
+                }
+                if (!produced)
+                {
+                    break;
+                }
+                decoder.decodedTime = frameTime(decoder);
+                decoder.frame.serial = 0;
+                decoder.maximumOutputEdge = -1;
+                haveFrame = true;
             }
-            else if (!decoder.orientationAutoEnabled && normalizedOrientation == 180)
+            if (!haveFrame)
             {
-                cv::Mat rotated;
-                cv::rotate(decoded, rotated, cv::ROTATE_180);
-                decoded = std::move(rotated);
+                error = "FFmpeg reached the end of the video before decoding a frame.";
+                return nullptr;
             }
+            decoder.requestedTime = target;
+            return updateOutput(decoder, request, error) ? &decoder.frame : nullptr;
         }
 
     public:
@@ -220,12 +629,11 @@ namespace weasel
         const MediaDecodedFrame* read(const MediaDecodeRequest& request, std::string& error)
         {
             auto [iterator, inserted] = m_decoders.try_emplace(request.streamId);
-            if (inserted && m_maximumCachedStreams > 0 && m_decoders.size() > m_maximumCachedStreams)
+            if (inserted && m_maximumCachedStreams > 0
+                && m_decoders.size() > m_maximumCachedStreams)
             {
                 const auto oldest = std::min_element(
-                    m_decoders.begin(),
-                    m_decoders.end(),
-                    [&iterator](const auto& left, const auto& right)
+                    m_decoders.begin(), m_decoders.end(), [&iterator](const auto& left, const auto& right)
                     {
                         if (left.first == iterator->first)
                         {
@@ -249,85 +657,7 @@ namespace weasel
             {
                 reset(decoder, request);
             }
-
-            try
-            {
-                if (request.isStillImage)
-                {
-                    return loadStill(decoder, request, error) ? &decoder.frame : nullptr;
-                }
-                if (!openVideo(decoder, request, error))
-                {
-                    return nullptr;
-                }
-
-                const double sourceFps = request.sourceFps > 0.0
-                    ? request.sourceFps
-                    : std::max(1.0, decoder.capture.get(cv::CAP_PROP_FPS));
-                long long targetFrame = std::max(0LL,
-                    std::llround(std::max(0.0, request.sourceTime) * sourceFps));
-                if (decoder.frameCount > 0)
-                {
-                    targetFrame = std::min(targetFrame, decoder.frameCount - 1);
-                }
-                if (targetFrame == decoder.decodedFrameIndex && !decoder.sourceRgba.empty())
-                {
-                    return updateOutput(decoder, request.maximumOutputEdge) ? &decoder.frame : nullptr;
-                }
-
-                cv::Mat decoded;
-                const long long forwardDistance = targetFrame - decoder.decodedFrameIndex;
-                if (request.allowForwardDecode && decoder.decodedFrameIndex >= 0
-                    && forwardDistance > 0 && forwardDistance <= 90)
-                {
-                    for (long long index = 0; index < forwardDistance; ++index)
-                    {
-                        if (!decoder.capture.grab())
-                        {
-                            error = "Could not decode frame " + std::to_string(targetFrame)
-                                + " from '" + request.path.filename().string() + "'.";
-                            return nullptr;
-                        }
-                    }
-                    if (!decoder.capture.retrieve(decoded) || decoded.empty())
-                    {
-                        error = "Could not retrieve frame " + std::to_string(targetFrame)
-                            + " from '" + request.path.filename().string() + "'.";
-                        return nullptr;
-                    }
-                }
-                else
-                {
-                    if (!decoder.capture.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(targetFrame))
-                        || !decoder.capture.read(decoded) || decoded.empty())
-                    {
-                        static_cast<void>(decoder.capture.set(cv::CAP_PROP_POS_MSEC,
-                                                               std::max(0.0, request.sourceTime) * 1000.0));
-                        if (!decoder.capture.read(decoded) || decoded.empty())
-                        {
-                            error = "Could not decode frame " + std::to_string(targetFrame)
-                                + " from '" + request.path.filename().string() + "'.";
-                            return nullptr;
-                        }
-                    }
-                }
-
-                applyOrientation(decoder, request, decoded);
-                if (!ConvertToRgba(decoded, decoder.sourceRgba, error))
-                {
-                    error = "Could not convert a frame from '" + request.path.filename().string() + "': " + error;
-                    return nullptr;
-                }
-                decoder.decodedFrameIndex = targetFrame;
-                decoder.frame.serial = 0;
-                decoder.maximumOutputEdge = -1;
-                return updateOutput(decoder, request.maximumOutputEdge) ? &decoder.frame : nullptr;
-            }
-            catch (const cv::Exception& exception)
-            {
-                error = "OpenCV could not decode '" + request.path.filename().string() + "': " + exception.what();
-                return nullptr;
-            }
+            return readDecoder(decoder, request, error);
         }
 
         void retain(const std::unordered_set<std::uint64_t>& activeStreamIds)
@@ -346,7 +676,8 @@ namespace weasel
 
     MediaDecoder::~MediaDecoder() = default;
 
-    const MediaDecodedFrame* MediaDecoder::read(const MediaDecodeRequest& request, std::string& error)
+    const MediaDecodedFrame* MediaDecoder::read(const MediaDecodeRequest& request,
+                                                std::string& error)
     {
         return m_impl->read(request, error);
     }

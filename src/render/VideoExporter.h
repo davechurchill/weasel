@@ -1,6 +1,7 @@
 #pragma once
 
 #include "project/ProjectData.h"
+#include "render/SequenceRenderPlan.h"
 
 #include <atomic>
 #include <chrono>
@@ -42,7 +43,7 @@ namespace weasel
         bool                   cancelRequested = false;
         // Negative until FFmpeg has produced enough progress to estimate a rate.
         double                 estimatedRemainingSeconds = -1.0;
-        std::string            ffmpegCommand;
+        std::string            backendDescription;
         // FFmpeg's current encoded output size and its extrapolated final size.
         std::uint64_t          outputFileSizeBytes = 0;
         std::uint64_t          projectedFileSizeBytes = 0;
@@ -55,9 +56,8 @@ namespace weasel
     private:
         std::mutex          m_lifecycleMutex;
         mutable std::mutex  m_mutex;
-        mutable std::mutex  m_processMutex;
         ExportStatus        m_status;
-        std::string         m_ffmpegCommand;
+        std::string         m_backendDescription;
         std::thread         m_worker;
         std::atomic_bool    m_cancelRequested = false;
         bool                m_shutdown = false;
@@ -68,18 +68,14 @@ namespace weasel
         std::optional<std::chrono::steady_clock::time_point> m_exportStartedAt;
         mutable std::optional<std::chrono::steady_clock::time_point> m_exportEndedAt;
 
-        // An opaque native process token while protected by m_processMutex.
-        // Keeping it untyped lets the UI request cancellation without pulling
-        // platform process headers into this public header.
-        void*                m_activeProcess = nullptr;
         std::uint64_t        m_nextGeneration = 1;
 
         // Background work receives an immutable value snapshot so export
         // cannot observe concurrent editor mutations.
         void exportWorker(ProjectData project,
-                          std::filesystem::path ffmpegPath,
                           std::filesystem::path outputPath,
-                          std::uint64_t generation);
+                          std::uint64_t generation,
+                          std::vector<SequenceRenderEntry> cachedAudioEntries);
 
     public:
         VideoExporter();
@@ -89,11 +85,11 @@ namespace weasel
         VideoExporter& operator=(const VideoExporter&) = delete;
 
         bool start(const ProjectData& project,
-                   const std::filesystem::path& ffmpegPath,
                    const std::filesystem::path& outputPath,
+                   const std::vector<SequenceRenderEntry>& cachedAudioEntries,
                    std::string& error);
 
-        // Requests that the active FFmpeg process stop. The export is staged,
+        // Interrupts active libav decoding and encoding. The export is staged,
         // so a cancelled job never publishes a partial output file.
         void cancel();
 

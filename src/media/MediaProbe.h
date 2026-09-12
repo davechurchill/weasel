@@ -2,6 +2,7 @@
 
 #include "project/ProjectData.h"
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -24,6 +25,7 @@ namespace weasel
     {
         bool          forwardPlayback = false;
         std::uint64_t streamId = 0;
+        std::atomic_bool* cancelRequested = nullptr;
     };
 
     class MediaProbe
@@ -35,7 +37,6 @@ namespace weasel
         static std::optional<MediaKind> classifyPath(const std::filesystem::path& mediaPath);
 
         static bool probe(const std::filesystem::path& mediaPath,
-                          const std::filesystem::path& ffprobePath,
                           MediaAsset& asset,
                           std::string& error,
                           std::optional<MediaKind> expectedKind = std::nullopt);

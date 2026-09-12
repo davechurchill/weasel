@@ -29,7 +29,6 @@ namespace weasel
             std::filesystem::path cachePath;
         };
 
-        std::filesystem::path                       m_applicationDirectory;
         std::filesystem::path                       m_cacheDirectory;
         AudioWaveformCache                          m_waveforms;
         SequenceAudioRenderer                       m_renderer;
@@ -59,8 +58,7 @@ namespace weasel
         void pruneClipAudioCache() const;
 
     public:
-        SequenceAudioController(std::filesystem::path applicationDirectory = {},
-                                std::filesystem::path cacheDirectory = {});
+        explicit SequenceAudioController(std::filesystem::path cacheDirectory = {});
         ~SequenceAudioController();
 
         SequenceAudioController(const SequenceAudioController&) = delete;
@@ -102,7 +100,7 @@ namespace weasel
         // forgets the current layout. Suitable for New/Open.
         void reset();
 
-        // Stops playback, cancels all FFmpeg work, and joins every owned
+        // Stops playback, cancels all linked-FFmpeg work, and joins every owned
         // worker. Terminal; used immediately before application exit.
         void shutdown();
 
@@ -110,9 +108,11 @@ namespace weasel
         bool renderQueued() const noexcept;
         bool renderInFlight() const noexcept;
         bool ready() const;
+        // Returns processed, timeline-positioned WAV entries when every clip
+        // cache is current. Export can reuse these instead of reopening and
+        // reprocessing the original containers.
+        std::vector<SequenceRenderEntry> cachedAudioEntries() const;
         const std::string& error() const noexcept;
-
-        std::filesystem::path ffmpegPath() const;
 
         // Queue a waveform for one audio-bearing asset. The call is ignored
         // until drawAudioWaveforms() is enabled, preserving the opt-in

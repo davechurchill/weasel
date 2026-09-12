@@ -12,15 +12,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\app\main.cpp" />
-    <ClCompile Include="..\src\render\AudioGraphBuilder.cpp" />
     <ClCompile Include="..\src\media\AudioWaveformCache.cpp" />
+    <ClCompile Include="..\src\media\FfmpegBackend.cpp" />
     <ClCompile Include="..\src\ui\ClipInspector.cpp" />
     <ClCompile Include="..\src\project\ClipPresetLibrary.cpp" />
     <ClCompile Include="..\src\app\EditorState.cpp" />
     <ClCompile Include="..\src\render\ExportController.cpp" />
     <ClCompile Include="..\src\render\FfmpegRenderer.cpp" />
     <ClCompile Include="..\src\render\VideoRenderer.cpp" />
-    <ClCompile Include="..\src\media\FfmpegProcess.cpp" />
     <ClCompile Include="..\src\media\MediaDecoder.cpp" />
     <ClCompile Include="..\src\media\MediaImportController.cpp" />
     <ClCompile Include="..\src\media\MediaThumbnailController.cpp" />
@@ -28,11 +27,9 @@
     <ClCompile Include="..\src\media\MediaProbe.cpp" />
     <ClCompile Include="..\src\render\PreviewController.cpp" />
     <ClCompile Include="..\src\media\PreviewFrameCache.cpp" />
-    <ClCompile Include="..\src\platform\ProcessRunner.cpp" />
     <ClCompile Include="..\src\app\RecentProjects.cpp" />
     <ClCompile Include="..\src\project\EditHistory.cpp" />
     <ClCompile Include="..\src\project\ProjectData.cpp" />
-    <ClCompile Include="..\src\platform\ProcessUtils.cpp" />
     <ClCompile Include="..\src\render\SequenceAudioController.cpp" />
     <ClCompile Include="..\src\render\SequenceAudioRenderer.cpp" />
     <ClCompile Include="..\src\render\SequenceRenderPlan.cpp" />
@@ -45,31 +42,28 @@
     <ClCompile Include="..\src\render\VideoExporter.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\render\AudioGraphBuilder.h" />
     <ClInclude Include="..\src\app\EditorState.h" />
     <ClInclude Include="..\src\render\ExportController.h" />
     <ClInclude Include="..\src\render\FfmpegRenderer.h" />
     <ClInclude Include="..\src\media\MediaImportController.h" />
     <ClInclude Include="..\src\media\MediaThumbnailController.h" />
     <ClInclude Include="..\src\media\AudioWaveformCache.h" />
+    <ClInclude Include="..\src\media\FfmpegBackend.h" />
     <ClInclude Include="..\src\project\ClipPresetLibrary.h" />
     <ClInclude Include="..\src\ui\ClipInspector.h" />
     <ClInclude Include="..\src\project\ClipSettings.hpp" />
     <ClInclude Include="..\src\project\ClipSettingsJson.hpp" />
     <ClInclude Include="..\src\project\ExportSettings.h" />
     <ClInclude Include="..\src\render\VideoRenderer.h" />
-    <ClInclude Include="..\src\media\FfmpegProcess.h" />
     <ClInclude Include="..\src\media\MediaDecoder.h" />
     <ClInclude Include="..\src\media\MediaProbe.h" />
     <ClInclude Include="..\src\media\MediaTools.h" />
     <ClInclude Include="..\src\render\PreviewController.h" />
     <ClInclude Include="..\src\media\PreviewFrameCache.h" />
-    <ClInclude Include="..\src\platform\ProcessRunner.h" />
     <ClInclude Include="..\src\app\RecentProjects.h" />
     <ClInclude Include="..\src\project\ProjectFile.hpp" />
     <ClInclude Include="..\src\project\EditHistory.h" />
     <ClInclude Include="..\src\project\ProjectData.h" />
-    <ClInclude Include="..\src\platform\ProcessUtils.h" />
     <ClInclude Include="..\src\timeline\Sequence.hpp" />
     <ClInclude Include="..\src\render\SequenceAudioController.h" />
     <ClInclude Include="..\src\render\SequenceAudioRenderer.h" />
@@ -131,7 +125,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\src;$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -139,7 +133,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;Mfuuid.lib;Strmiids.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -149,7 +143,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;SFML_STATIC;IMGUI_USER_CONFIG=&quot;imconfig-SFML.h&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\src;$(VcpkgRoot)\installed\$(VcpkgTriplet)\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -159,15 +153,8 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Ws2_32.lib;Winmm.lib;Gdi32.lib;OpenGL32.lib;Comdlg32.lib;Shell32.lib;Secur32.lib;Ncrypt.lib;Crypt32.lib;Bcrypt.lib;Mfuuid.lib;Strmiids.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup>
-    <PostBuildEvent>
-      <Command>if not exist "$(OutDir)ffmpeg" mkdir "$(OutDir)ffmpeg"
-if exist "$(ProjectDir)..\tools\ffmpeg\ffmpeg.exe" copy /Y "$(ProjectDir)..\tools\ffmpeg\ffmpeg.exe" "$(OutDir)ffmpeg\ffmpeg.exe"
-if exist "$(ProjectDir)..\tools\ffmpeg\ffprobe.exe" copy /Y "$(ProjectDir)..\tools\ffmpeg\ffprobe.exe" "$(OutDir)ffmpeg\ffprobe.exe"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

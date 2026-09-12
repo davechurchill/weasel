@@ -1,47 +1,40 @@
 #pragma once
 
-#include "media/FfmpegProcess.h"
+#include "media/FfmpegBackend.h"
 #include "project/ProjectData.h"
 #include "render/SequenceRenderPlan.h"
 
 #include <atomic>
-#include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <vector>
 
 namespace weasel
 {
-    // Builds one native FFmpeg filter graph for the complete timeline. This
-    // avoids decoding and uploading every frame through Weasel's compositor,
-    // making it a good fit for long sequences with relatively few edits.
+    // Uses a persistent native FFmpeg filter graph and linked encoders. This
+    // avoids OpenGL uploads/readback and all child-process overhead, making it
+    // a good fit for long sequences with relatively few edits.
     class FfmpegRenderer
     {
     public:
         struct Request
         {
             const ProjectData&                  project;
-            const std::filesystem::path&        ffmpegPath;
             const std::filesystem::path&        stagingPath;
-            const std::vector<std::wstring>&    outputEncodingArguments;
-            std::uint64_t                       generation = 0;
             std::atomic_bool&                   cancelRequested;
-            std::mutex&                         processMutex;
-            void*&                             activeProcess;
+            const std::vector<SequenceRenderEntry>* audioEntriesOverride = nullptr;
         };
 
         struct Callbacks
         {
-            std::function<void(const std::vector<std::wstring>&)> onCommandReady;
             std::function<void(double)>                            onProgress;
-            FfmpegOutputCallback                                  onLog;
+            FfmpegLogCallback                                     onLog;
         };
 
         struct Result
         {
-            FfmpegProcessResult ffmpeg;
+            FfmpegOperationResult ffmpeg;
             std::string         rendererError;
         };
 

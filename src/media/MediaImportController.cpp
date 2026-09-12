@@ -1,7 +1,6 @@
 #include "media/MediaImportController.h"
 
 #include "media/MediaProbe.h"
-#include "media/MediaTools.h"
 
 #include <algorithm>
 #include <cmath>
@@ -44,30 +43,6 @@ namespace
 
 namespace weasel
 {
-    MediaImportController::MediaImportController(std::filesystem::path applicationDirectory)
-    {
-        setApplicationDirectory(std::move(applicationDirectory));
-    }
-
-    void MediaImportController::setApplicationDirectory(std::filesystem::path applicationDirectory)
-    {
-        if (applicationDirectory.empty())
-        {
-            std::error_code error;
-            applicationDirectory = std::filesystem::current_path(error);
-            if (error)
-            {
-                applicationDirectory = ".";
-            }
-        }
-        m_applicationDirectory = NormalizePath(applicationDirectory);
-    }
-
-    std::filesystem::path MediaImportController::ffprobePath() const
-    {
-        return FindMediaTool(m_applicationDirectory, "ffprobe");
-    }
-
     MediaImportResult MediaImportController::importMedia(ProjectData& document,
                                                            const std::filesystem::path& path) const
     {
@@ -95,7 +70,7 @@ namespace weasel
 
         MediaAsset asset;
         std::string probeError;
-        if (!MediaProbe::probe(result.path, ffprobePath(), asset, probeError, expectedKind))
+        if (!MediaProbe::probe(result.path, asset, probeError, expectedKind))
         {
             result.status = MediaImportStatus::ProbeFailed;
             result.message = "Could not import " + path.filename().string() + ": " + probeError;
@@ -127,7 +102,7 @@ namespace weasel
 
         MediaAsset probed;
         std::string error;
-        if (!MediaProbe::probe(asset->path, ffprobePath(), probed, error, MediaKind::Video)
+        if (!MediaProbe::probe(asset->path, probed, error, MediaKind::Video)
             || probed.kind != MediaKind::Video || probed.width <= 0 || probed.height <= 0)
         {
             return false;

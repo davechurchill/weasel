@@ -99,8 +99,8 @@ namespace weasel
 
     bool ExportController::startExport(sf::RenderWindow& mainWindow,
                                        const ProjectData& project,
-                                       const std::filesystem::path& ffmpegPath,
                                        const std::filesystem::path& outputPath,
+                                       const std::vector<SequenceRenderEntry>& cachedAudioEntries,
                                        std::string& error)
     {
         m_startupError.clear();
@@ -110,7 +110,7 @@ namespace weasel
             return false;
         }
 
-        if (m_exporter.start(project, ffmpegPath, outputPath, error))
+        if (m_exporter.start(project, outputPath, cachedAudioEntries, error))
         {
             return true;
         }
@@ -310,9 +310,9 @@ namespace weasel
                                   ImGuiWindowFlags_None))
             {
                 ImGui::PushTextWrapPos(0.0f);
-                if (!exportStatus.ffmpegCommand.empty())
+                if (!exportStatus.backendDescription.empty())
                 {
-                    ImGui::TextUnformatted(exportStatus.ffmpegCommand.c_str());
+                    ImGui::TextUnformatted(exportStatus.backendDescription.c_str());
                     if (!exportStatus.log.empty())
                     {
                         ImGui::Spacing();

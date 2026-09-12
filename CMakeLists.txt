@@ -45,7 +45,53 @@ unset(weasel_saved_find_package_prefer_config)
 find_package(OpenGL REQUIRED)
 find_package(ImGui-SFML CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(OpenCV CONFIG REQUIRED)
+if(DEFINED VCPKG_TARGET_TRIPLET)
+    find_package(FFMPEG REQUIRED)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED
+        libavcodec
+        libavfilter
+        libavformat
+        libavutil
+        libswresample
+        libswscale
+    )
+endif()
+
+# vcpkg's FFmpeg 8.1 wrapper currently exposes some debug archives through
+# pkg-config imported targets in every Visual Studio configuration. Correct
+# those transitive targets here so Release keeps /MT throughout.
+if(MSVC AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(weasel_vcpkg_prefix "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    if(TARGET PkgConfig::x264)
+        set_property(TARGET PkgConfig::x264 PROPERTY INTERFACE_LINK_LIBRARIES
+            "$<$<CONFIG:Debug>:${weasel_vcpkg_prefix}/debug/lib/libx264.lib>;$<$<NOT:$<CONFIG:Debug>>:${weasel_vcpkg_prefix}/lib/libx264.lib>")
+    endif()
+    if(TARGET PkgConfig::x265)
+        set_property(TARGET PkgConfig::x265 PROPERTY INTERFACE_LINK_LIBRARIES
+            "$<$<CONFIG:Debug>:${weasel_vcpkg_prefix}/debug/lib/x265-static.lib>;$<$<NOT:$<CONFIG:Debug>>:${weasel_vcpkg_prefix}/lib/x265-static.lib>;advapi32")
+    endif()
+    if(TARGET PkgConfig::libvpl)
+        set_property(TARGET PkgConfig::libvpl PROPERTY INTERFACE_LINK_LIBRARIES
+            "$<$<CONFIG:Debug>:${weasel_vcpkg_prefix}/debug/lib/vpld.lib>;$<$<NOT:$<CONFIG:Debug>>:${weasel_vcpkg_prefix}/lib/vpl.lib>;advapi32;ole32")
+    endif()
+    if(TARGET mp3lame::mp3lame)
+        set_property(TARGET mp3lame::mp3lame PROPERTY IMPORTED_LOCATION_DEBUG
+            "${weasel_vcpkg_prefix}/debug/lib/libmp3lame-static.lib")
+        set_property(TARGET mp3lame::mp3lame APPEND PROPERTY IMPORTED_CONFIGURATIONS DEBUG)
+    endif()
+    if(TARGET mp3lame::mpghip)
+        set_property(TARGET mp3lame::mpghip PROPERTY IMPORTED_LOCATION_DEBUG
+            "${weasel_vcpkg_prefix}/debug/lib/libmpghip-static.lib")
+        set_property(TARGET mp3lame::mpghip APPEND PROPERTY IMPORTED_CONFIGURATIONS DEBUG)
+    endif()
+    unset(weasel_vcpkg_prefix)
+endif()
+
+option(WEASEL_BUILD_FFMPEG_SMOKE_TEST
+    "Build the standalone linked-FFmpeg backend smoke test"
+    OFF)
 
 add_executable(Weasel
     src/app/main.cpp
@@ -53,19 +99,16 @@ add_executable(Weasel
     src/app/EditorState.cpp
     src/app/RecentProjects.cpp
     src/media/AudioWaveformCache.cpp
-    src/media/FfmpegProcess.cpp
+    src/media/FfmpegBackend.cpp
     src/media/MediaDecoder.cpp
     src/media/MediaImportController.cpp
     src/media/MediaProbe.cpp
     src/media/MediaThumbnailController.cpp
     src/media/MediaTools.cpp
     src/media/PreviewFrameCache.cpp
-    src/platform/ProcessRunner.cpp
-    src/platform/ProcessUtils.cpp
     src/project/ClipPresetLibrary.cpp
     src/project/EditHistory.cpp
     src/project/ProjectData.cpp
-    src/render/AudioGraphBuilder.cpp
     src/render/ExportController.cpp
     src/render/FfmpegRenderer.cpp
     src/render/PreviewController.cpp
@@ -82,7 +125,11 @@ add_executable(Weasel
     src/ui/TimelineView.cpp
 )
 
-target_include_directories(Weasel PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(Weasel PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    ${FFMPEG_INCLUDE_DIRS}
+)
+target_link_directories(Weasel PRIVATE ${FFMPEG_LIBRARY_DIRS})
 if(MSVC)
     target_compile_definitions(Weasel PRIVATE $<$<CONFIG:Debug>:_DEBUG>)
 endif()
@@ -96,30 +143,15 @@ if(WIN32)
 endif()
 
 target_compile_options(Weasel PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W3>)
+target_compile_options(Weasel PRIVATE ${FFMPEG_CFLAGS_OTHER})
+target_link_options(Weasel PRIVATE ${FFMPEG_LDFLAGS_OTHER})
 target_link_libraries(Weasel PRIVATE
     SFML::Graphics
     SFML::Audio
     ImGui-SFML::ImGui-SFML
     nlohmann_json::nlohmann_json
+    ${FFMPEG_LIBRARIES}
 )
-
-# The monolithic OpenCV target is available in the existing Windows build.
-# Other package builds commonly export component targets instead.
-if(TARGET opencv_world)
-    target_link_libraries(Weasel PRIVATE opencv_world)
-elseif(TARGET opencv_core)
-    target_link_libraries(Weasel PRIVATE
-        opencv_core
-        opencv_imgcodecs
-        opencv_imgproc
-        opencv_videoio
-    )
-    if(TARGET opencv_geometry)
-        target_link_libraries(Weasel PRIVATE opencv_geometry)
-    endif()
-else()
-    target_link_libraries(Weasel PRIVATE ${OpenCV_LIBS})
-endif()
 
 if(WIN32)
     target_link_libraries(Weasel PRIVATE comdlg32 shell32 pdh psapi)
@@ -138,8 +170,6 @@ endif()
 # Keep executable and debugger outputs in the repository's convenient runtime
 # directory while leaving intermediate compiler output in the build tree.
 set(WEASEL_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bin")
-set(WEASEL_PACKAGED_FFMPEG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/ffmpeg" CACHE PATH
-    "Directory containing the FFmpeg and FFprobe runtime tools")
 set_target_properties(Weasel PROPERTIES
     OUTPUT_NAME "Weasel"
     OUTPUT_NAME_DEBUG "Weasel_d"
@@ -166,31 +196,44 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
     endif()
 endforeach()
 
-# Windows uses .exe tools; macOS and Linux use extensionless tool names.
-set(WEASEL_FFMPEG_TOOL_SUFFIX "")
-if(WIN32)
-    set(WEASEL_FFMPEG_TOOL_SUFFIX ".exe")
-endif()
-
-# Keep the local runtime bundle beside the executable without using the source
-# tools directory as a compiler-output directory.
-set(weasel_ffmpeg_executable
-    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}")
-set(weasel_ffprobe_executable
-    "${WEASEL_PACKAGED_FFMPEG_DIR}/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}")
-if(EXISTS "${weasel_ffmpeg_executable}" AND EXISTS "${weasel_ffprobe_executable}")
-    add_custom_command(TARGET Weasel POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:Weasel>/ffmpeg"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${weasel_ffmpeg_executable}"
-            "$<TARGET_FILE_DIR:Weasel>/ffmpeg/ffmpeg${WEASEL_FFMPEG_TOOL_SUFFIX}"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${weasel_ffprobe_executable}"
-            "$<TARGET_FILE_DIR:Weasel>/ffmpeg/ffprobe${WEASEL_FFMPEG_TOOL_SUFFIX}"
-        VERBATIM
-    )
-endif()
-
 if(NOT WIN32)
     install(TARGETS Weasel RUNTIME DESTINATION ".")
+endif()
+
+if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
+    enable_testing()
+    add_executable(WeaselFfmpegSmoke
+        tests/FfmpegBackendSmoke.cpp
+        src/media/FfmpegBackend.cpp
+        src/media/MediaDecoder.cpp
+        src/media/MediaProbe.cpp
+    )
+    target_include_directories(WeaselFfmpegSmoke PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        ${FFMPEG_INCLUDE_DIRS}
+    )
+    target_link_directories(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_compile_options(WeaselFfmpegSmoke PRIVATE ${FFMPEG_CFLAGS_OTHER})
+    target_link_options(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LDFLAGS_OTHER})
+    target_link_libraries(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LIBRARIES})
+    if(MSVC)
+        target_compile_options(WeaselFfmpegSmoke PRIVATE /W3)
+    endif()
+    add_test(NAME WeaselFfmpegSmoke COMMAND WeaselFfmpegSmoke)
+
+    add_executable(WeaselFfmpegBenchmark
+        tests/FfmpegRenderBenchmark.cpp
+        src/media/FfmpegBackend.cpp
+    )
+    target_include_directories(WeaselFfmpegBenchmark PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        ${FFMPEG_INCLUDE_DIRS}
+    )
+    target_link_directories(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_compile_options(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_CFLAGS_OTHER})
+    target_link_options(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LDFLAGS_OTHER})
+    target_link_libraries(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LIBRARIES})
+    if(MSVC)
+        target_compile_options(WeaselFfmpegBenchmark PRIVATE /W3)
+    endif()
 endif()

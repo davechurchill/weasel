@@ -37,23 +37,10 @@ namespace weasel
         }
     };
 
-    // Owns no UI state.  Callers supply the executable/application directory
-    // so packaged FFprobe is preferred over a system installation.
+    // Owns no UI state. Media inspection is performed by linked libraries.
     class MediaImportController
     {
-    private:
-        std::filesystem::path m_applicationDirectory;
-
     public:
-        explicit MediaImportController(std::filesystem::path applicationDirectory = {});
-
-        void setApplicationDirectory(std::filesystem::path applicationDirectory);
-
-        // Resolves ffprobe from <application>/ffmpeg first, then beside the
-        // executable.  On macOS/Linux, PATH is a final fallback for Brew/APT
-        // installations.
-        std::filesystem::path ffprobePath() const;
-
         // Adds a newly probed asset to persistent project data, or returns the existing asset
         // when the normalized source path is already in the media bin.
         [[nodiscard]] MediaImportResult importMedia(ProjectData& project, const std::filesystem::path& path) const;

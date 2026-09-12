@@ -77,8 +77,8 @@ namespace weasel
     };
 
     // A single-worker, non-blocking cache for source-media waveforms. Source-
-    // time tiles survive timeline moves and ripple edits. FFmpeg reduces each
-    // requested range to min/max metadata, so raw PCM never crosses the pipe.
+    // time tiles survive timeline moves and ripple edits. The linked FFmpeg
+    // libraries reduce decoded PCM to min/max peaks entirely in-process.
     // All public functions are thread-safe. The returned waveform is
     // immutable and remains valid independently of future cache requests.
     class AudioWaveformCache
@@ -94,15 +94,9 @@ namespace weasel
         std::thread                                     m_worker;
         bool                                            m_stopping = false;
 
-        // Kept separate from m_mutex so cancellation can terminate FFmpeg
-        // immediately without waiting on status/map updates.
-        mutable std::mutex                m_processMutex;
-        void*                             m_activeProcess = nullptr;
-        std::shared_ptr<std::atomic_bool> m_activeCancellation;
         std::uint64_t                     m_nextGeneration = 1;
 
         void workerMain();
-        void stopActiveProcess(const std::shared_ptr<std::atomic_bool>& cancellation);
         void publishProgress(const Request& request, float progress);
         void publishFailure(const Request& request, std::string message, std::string error);
         void publishReady(const Request& request, std::shared_ptr<const AudioWaveform> waveform);
@@ -114,7 +108,7 @@ namespace weasel
         AudioWaveformCache(const AudioWaveformCache&) = delete;
         AudioWaveformCache& operator=(const AudioWaveformCache&) = delete;
 
-        // Cancels FFmpeg, stops the worker, and waits for both to exit. This
+        // Cancels libav decoding, stops the worker, and waits for it to exit. This
         // cache cannot accept new requests after shutdown.
         void shutdown();
 
@@ -125,7 +119,6 @@ namespace weasel
                      const std::filesystem::path& mediaPath,
                      double durationSeconds,
                      const std::vector<AudioWaveformRange>& sourceRanges,
-                     const std::filesystem::path& ffmpegPath,
                      const std::filesystem::path& cacheDirectory);
 
         // Reads the latest status and immutable waveform without blocking on

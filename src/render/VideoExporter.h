@@ -57,7 +57,6 @@ namespace weasel
         std::mutex          m_lifecycleMutex;
         mutable std::mutex  m_mutex;
         ExportStatus        m_status;
-        std::string         m_backendDescription;
         std::thread         m_worker;
         std::atomic_bool    m_cancelRequested = false;
         bool                m_shutdown = false;

@@ -16,7 +16,6 @@ namespace weasel
         std::filesystem::path               m_configFilePath;
         std::vector<std::filesystem::path>  m_projectDirectories;
 
-        static std::filesystem::path normalizePath(const std::filesystem::path& path);
         static std::string pathKey(const std::filesystem::path& path);
         bool save(std::string& error) const;
 

@@ -68,17 +68,7 @@ namespace weasel
         return m_project;
     }
 
-    const ProjectData& EditorState::project() const noexcept
-    {
-        return m_project;
-    }
-
     TimelineController& EditorState::timeline() noexcept
-    {
-        return m_timeline;
-    }
-
-    const TimelineController& EditorState::timeline() const noexcept
     {
         return m_timeline;
     }

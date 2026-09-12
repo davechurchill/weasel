@@ -104,7 +104,6 @@ add_executable(Weasel
     src/media/MediaImportController.cpp
     src/media/MediaProbe.cpp
     src/media/MediaThumbnailController.cpp
-    src/media/MediaTools.cpp
     src/media/PreviewFrameCache.cpp
     src/project/ClipPresetLibrary.cpp
     src/project/EditHistory.cpp
@@ -112,6 +111,7 @@ add_executable(Weasel
     src/render/ExportController.cpp
     src/render/FfmpegRenderer.cpp
     src/render/PreviewController.cpp
+    src/render/RenderPreparation.cpp
     src/render/SequenceAudioController.cpp
     src/render/SequenceAudioRenderer.cpp
     src/render/SequenceRenderPlan.cpp
@@ -123,6 +123,7 @@ add_executable(Weasel
     src/ui/ClipInspector.cpp
     src/ui/SequenceInspector.cpp
     src/ui/TimelineView.cpp
+    src/util/FileUtils.cpp
 )
 
 target_include_directories(Weasel PRIVATE
@@ -154,7 +155,7 @@ target_link_libraries(Weasel PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(Weasel PRIVATE comdlg32 shell32 pdh psapi)
+    target_link_libraries(Weasel PRIVATE comdlg32 shell32)
 endif()
 
 include(CheckIPOSupported)

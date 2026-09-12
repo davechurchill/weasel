@@ -11,7 +11,7 @@ if not exist "%VCPKG_ROOT%\.git" (
 
 pushd "%VCPKG_ROOT%"
 call bootstrap-vcpkg.bat
-vcpkg.exe install "sfml[graphics,audio,network]:%VCPKG_TRIPLET%" "imgui-sfml:%VCPKG_TRIPLET%" "nlohmann-json:%VCPKG_TRIPLET%" "ffmpeg[avcodec,avfilter,avformat,swresample,swscale,gpl,x264,x265,mp3lame,amf,nvcodec,qsv]:%VCPKG_TRIPLET%"
+vcpkg.exe install "sfml[graphics,audio]:%VCPKG_TRIPLET%" "imgui-sfml:%VCPKG_TRIPLET%" "nlohmann-json:%VCPKG_TRIPLET%" "ffmpeg[avcodec,avfilter,avformat,swresample,swscale,gpl,x264,x265,mp3lame,amf,nvcodec,qsv]:%VCPKG_TRIPLET%"
 vcpkg.exe integrate install
 popd
 

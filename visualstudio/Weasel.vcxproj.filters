@@ -3,11 +3,11 @@
   <ItemGroup>
     <Filter Include="app"><UniqueIdentifier>{C2A82B3E-0CF3-4D43-9186-7CD378B263DE}</UniqueIdentifier></Filter>
     <Filter Include="media"><UniqueIdentifier>{1FE04B03-63BA-42A6-811A-A183584019FF}</UniqueIdentifier></Filter>
-    <Filter Include="platform"><UniqueIdentifier>{3031F123-05F7-4370-8819-676FF6AE433B}</UniqueIdentifier></Filter>
     <Filter Include="project"><UniqueIdentifier>{5AB9E70D-92B2-4B0F-92B9-F75D380FA3FA}</UniqueIdentifier></Filter>
     <Filter Include="render"><UniqueIdentifier>{6FE47E68-D83C-493E-B9FA-6FB231E46EE3}</UniqueIdentifier></Filter>
     <Filter Include="timeline"><UniqueIdentifier>{A4E1E2BB-CB09-4C34-9A3C-576613457BD1}</UniqueIdentifier></Filter>
     <Filter Include="ui"><UniqueIdentifier>{4EB19B2D-DB19-4A40-9977-C2CA7E12E3C9}</UniqueIdentifier></Filter>
+    <Filter Include="util"><UniqueIdentifier>{796CF55B-85D7-4425-A0F8-817B10138581}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\app\main.cpp"><Filter>app</Filter></ClCompile>
@@ -26,6 +26,7 @@
     <ClCompile Include="..\src\media\MediaProbe.cpp"><Filter>media</Filter></ClCompile>
     <ClCompile Include="..\src\media\MediaDecoder.cpp"><Filter>media</Filter></ClCompile>
     <ClCompile Include="..\src\render\PreviewController.cpp"><Filter>render</Filter></ClCompile>
+    <ClCompile Include="..\src\render\RenderPreparation.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\media\PreviewFrameCache.cpp"><Filter>media</Filter></ClCompile>
     <ClCompile Include="..\src\app\RecentProjects.cpp"><Filter>app</Filter></ClCompile>
     <ClCompile Include="..\src\media\AudioWaveformCache.cpp"><Filter>media</Filter></ClCompile>
@@ -38,7 +39,7 @@
     <ClCompile Include="..\src\render\VideoExporter.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\render\VideoCompositor.cpp"><Filter>render</Filter></ClCompile>
     <ClCompile Include="..\src\media\FfmpegBackend.cpp"><Filter>media</Filter></ClCompile>
-    <ClCompile Include="..\src\media\MediaTools.cpp"><Filter>media</Filter></ClCompile>
+    <ClCompile Include="..\src\util\FileUtils.cpp"><Filter>util</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\app\Editor.h"><Filter>app</Filter></ClInclude>
@@ -61,6 +62,7 @@
     <ClInclude Include="..\src\media\MediaProbe.h"><Filter>media</Filter></ClInclude>
     <ClInclude Include="..\src\media\MediaDecoder.h"><Filter>media</Filter></ClInclude>
     <ClInclude Include="..\src\render\PreviewController.h"><Filter>render</Filter></ClInclude>
+    <ClInclude Include="..\src\render\RenderPreparation.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\media\PreviewFrameCache.h"><Filter>media</Filter></ClInclude>
     <ClInclude Include="..\src\app\RecentProjects.h"><Filter>app</Filter></ClInclude>
     <ClInclude Include="..\src\media\AudioWaveformCache.h"><Filter>media</Filter></ClInclude>
@@ -74,6 +76,11 @@
     <ClInclude Include="..\src\render\VideoExporter.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\render\VideoCompositor.h"><Filter>render</Filter></ClInclude>
     <ClInclude Include="..\src\media\FfmpegBackend.h"><Filter>media</Filter></ClInclude>
-    <ClInclude Include="..\src\media\MediaTools.h"><Filter>media</Filter></ClInclude>
+    <ClInclude Include="..\src\media\FfmpegInternal.h"><Filter>media</Filter></ClInclude>
+    <ClInclude Include="..\src\ui\UiUtils.h"><Filter>ui</Filter></ClInclude>
+    <ClInclude Include="..\src\util\FileUtils.h"><Filter>util</Filter></ClInclude>
+    <ClInclude Include="..\src\util\PathUtils.h"><Filter>util</Filter></ClInclude>
+    <ClInclude Include="..\src\util\ColorUtils.h"><Filter>util</Filter></ClInclude>
+    <ClInclude Include="..\src\util\TextUtils.h"><Filter>util</Filter></ClInclude>
   </ItemGroup>
 </Project>

@@ -1,8 +1,8 @@
 #include "render/FfmpegRenderer.h"
+#include "render/RenderPreparation.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <exception>
 #include <string>
 #include <vector>
@@ -57,26 +57,14 @@ namespace weasel
             result.ffmpeg.cancelled = true;
             return result;
         }
-        const int width = request.project.sequence().width;
-        const int height = request.project.sequence().height;
-        const double frameRate = request.project.sequence().fps;
-        const double duration = std::max(0.05, request.project.duration());
-        if (width <= 0 || height <= 0 || frameRate <= 0.0)
-        {
-            result.rendererError = "The sequence has an invalid output format.";
-            return result;
-        }
-
-        SequenceRenderPlan plan;
-        SequenceRenderPlanOptions options;
-        options.validateLuts = true;
-        if (!SequenceRenderPlan::build(request.project, plan, result.rendererError, options)
-            || !validate(plan, result.rendererError))
+        PreparedSequenceRender prepared;
+        if (!PrepareSequenceRender(request.project, prepared, result.rendererError)
+            || !validate(prepared.plan, result.rendererError))
         {
             return result;
         }
         std::vector<SequenceRenderEntry> visualEntries;
-        for (const SequenceRenderEntry& entry : plan.entries())
+        for (const SequenceRenderEntry& entry : prepared.plan.entries())
         {
             if (entry.includeVideo)
             {
@@ -85,23 +73,15 @@ namespace weasel
         }
 
         FfmpegTimelineEncoder encoder;
-        FfmpegTimelineEncoder::Configuration configuration;
-        configuration.outputPath = request.stagingPath;
-        configuration.settings = request.project.exportSettings();
-        configuration.width = width;
-        configuration.height = height;
-        configuration.frameRate = frameRate;
-        configuration.durationSeconds = duration;
-        configuration.audioEntries = request.audioEntriesOverride
-            ? *request.audioEntriesOverride : plan.audioEntries();
-        configuration.cancelRequested = &request.cancelRequested;
-        configuration.onLog = callbacks.onLog;
-        if (!encoder.open(configuration, result.rendererError))
+        if (!OpenTimelineEncoder(request.project, prepared, request.stagingPath,
+                                 request.cancelRequested, request.audioEntriesOverride,
+                                 callbacks.onLog, encoder, result.rendererError))
         {
             return result;
         }
         FfmpegStreamingVideoSource videoSource;
-        if (!videoSource.open(visualEntries, width, height, frameRate, duration,
+        if (!videoSource.open(visualEntries, prepared.width, prepared.height,
+                              prepared.frameRate, prepared.duration,
                               result.rendererError, encoder.videoPixelFormat(),
                               &request.cancelRequested))
         {
@@ -110,14 +90,13 @@ namespace weasel
         }
 
         const long long frameCount = std::max(1LL, static_cast<long long>(
-            std::ceil(duration * frameRate - 0.000000001)));
+            std::ceil(prepared.duration * prepared.frameRate - 0.000000001)));
 
         for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
             if (request.cancelRequested.load(std::memory_order_acquire))
             {
                 encoder.abort();
-                result.ffmpeg.started = true;
                 result.ffmpeg.cancelled = true;
                 return result;
             }
@@ -143,11 +122,11 @@ namespace weasel
             }
             if (callbacks.onProgress)
             {
-                callbacks.onProgress(std::min(duration,
-                    static_cast<double>(frameIndex + 1) / frameRate));
+                callbacks.onProgress(std::min(prepared.duration,
+                    static_cast<double>(frameIndex + 1) / prepared.frameRate));
             }
         }
-        result.ffmpeg = encoder.finish(duration);
+        result.ffmpeg = encoder.finish(prepared.duration);
         return result;
     }
     catch (const std::exception& exception)

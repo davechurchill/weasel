@@ -1,4 +1,6 @@
 #include "media/FfmpegBackend.h"
+#include "media/FfmpegInternal.h"
+#include "util/ColorUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -21,8 +23,6 @@ extern "C"
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
 #include <libavutil/channel_layout.h>
-#include <libavutil/display.h>
-#include <libavutil/error.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
@@ -33,25 +33,17 @@ extern "C"
 
 namespace
 {
+    using weasel::FfmpegInternal::AvError;
+    using weasel::FfmpegInternal::CodecPtr;
+    using weasel::FfmpegInternal::FramePtr;
+    using weasel::FfmpegInternal::InputFormatPtr;
+    using weasel::FfmpegInternal::InterruptRead;
+    using weasel::FfmpegInternal::PacketPtr;
+    using weasel::FfmpegInternal::StreamRotationDegrees;
+    using weasel::FfmpegInternal::Utf8Path;
+
     constexpr int AudioSampleRate = 48000;
     constexpr int AudioChannels = 2;
-
-    std::string Utf8Path(const std::filesystem::path& path)
-    {
-#if defined(_WIN32)
-        const std::u8string value = path.u8string();
-        return { reinterpret_cast<const char*>(value.data()), value.size() };
-#else
-        return path.string();
-#endif
-    }
-
-    std::string AvError(int code)
-    {
-        std::array<char, AV_ERROR_MAX_STRING_SIZE> text{};
-        av_strerror(code, text.data(), text.size());
-        return text.data();
-    }
 
     std::string Number(double value)
     {
@@ -71,14 +63,6 @@ namespace
         return result.empty() ? "0" : result;
     }
 
-    struct InputFormatDeleter
-    {
-        void operator()(AVFormatContext* context) const noexcept
-        {
-            avformat_close_input(&context);
-        }
-    };
-
     struct OutputFormatDeleter
     {
         void operator()(AVFormatContext* context) const noexcept
@@ -92,30 +76,6 @@ namespace
                 avio_closep(&context->pb);
             }
             avformat_free_context(context);
-        }
-    };
-
-    struct CodecDeleter
-    {
-        void operator()(AVCodecContext* context) const noexcept
-        {
-            avcodec_free_context(&context);
-        }
-    };
-
-    struct FrameDeleter
-    {
-        void operator()(AVFrame* frame) const noexcept
-        {
-            av_frame_free(&frame);
-        }
-    };
-
-    struct PacketDeleter
-    {
-        void operator()(AVPacket* packet) const noexcept
-        {
-            av_packet_free(&packet);
         }
     };
 
@@ -143,20 +103,10 @@ namespace
         }
     };
 
-    using InputFormatPtr = std::unique_ptr<AVFormatContext, InputFormatDeleter>;
     using OutputFormatPtr = std::unique_ptr<AVFormatContext, OutputFormatDeleter>;
-    using CodecPtr = std::unique_ptr<AVCodecContext, CodecDeleter>;
-    using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
-    using PacketPtr = std::unique_ptr<AVPacket, PacketDeleter>;
     using FilterGraphPtr = std::unique_ptr<AVFilterGraph, FilterGraphDeleter>;
     using SwrPtr = std::unique_ptr<SwrContext, SwrDeleter>;
     using AudioFifoPtr = std::unique_ptr<AVAudioFifo, AudioFifoDeleter>;
-
-    int InterruptRead(void* opaque)
-    {
-        const auto* cancellation = static_cast<const std::atomic_bool*>(opaque);
-        return cancellation && cancellation->load(std::memory_order_acquire) ? 1 : 0;
-    }
 
     void AppendSpeedFilters(std::ostringstream& filters, const weasel::TimelineClip& clip)
     {
@@ -821,32 +771,6 @@ namespace
         return "'" + escaped + "'";
     }
 
-    std::array<double, 3> TemperatureRgb(double kelvin)
-    {
-        const double temperature = std::clamp(kelvin, 1000.0, 40000.0) / 100.0;
-        double red = 0.0;
-        double green = 0.0;
-        double blue = 0.0;
-        if (temperature <= 66.0)
-        {
-            red = 255.0;
-            green = 99.4708025861 * std::log(std::max(temperature, 1.0)) - 161.1195681661;
-            blue = temperature <= 19.0 ? 0.0
-                : 138.5177312231 * std::log(temperature - 10.0) - 305.0447927307;
-        }
-        else
-        {
-            red = 329.698727446 * std::pow(temperature - 60.0, -0.1332047592);
-            green = 288.1221695283 * std::pow(temperature - 60.0, -0.0755148492);
-            blue = 255.0;
-        }
-        return {
-            std::clamp(red, 0.0, 255.0) / 255.0,
-            std::clamp(green, 0.0, 255.0) / 255.0,
-            std::clamp(blue, 0.0, 255.0) / 255.0
-        };
-    }
-
     struct VideoFilterLayout
     {
         double overlayOffsetX = 0.0;
@@ -873,8 +797,8 @@ namespace
         }
         if (std::abs(video.temperature - 6500.0) > 0.000001)
         {
-            const auto reference = TemperatureRgb(6500.0);
-            const auto temperature = TemperatureRgb(video.temperature);
+            const auto reference = weasel::TemperatureRgb(6500.0);
+            const auto temperature = weasel::TemperatureRgb(video.temperature);
             filters << ",colorchannelmixer=rr=" << Number(temperature[0] / reference[0])
                     << ":gg=" << Number(temperature[1] / reference[1])
                     << ":bb=" << Number(temperature[2] / reference[2]);
@@ -1224,21 +1148,7 @@ namespace
             AVStream* stream = m_format->streams[m_streamIndex];
             m_streamTimeBase = stream->time_base;
             m_streamOrigin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
-            const AVPacketSideData* displayMatrix = av_packet_side_data_get(
-                stream->codecpar->coded_side_data,
-                stream->codecpar->nb_coded_side_data,
-                AV_PKT_DATA_DISPLAYMATRIX);
-            if (displayMatrix && displayMatrix->size >= 9 * sizeof(std::int32_t))
-            {
-                const double rotation = av_display_rotation_get(
-                    reinterpret_cast<const std::int32_t*>(displayMatrix->data));
-                if (std::isfinite(rotation))
-                {
-                    m_rotationDegrees = static_cast<int>(
-                        std::llround(-rotation / 90.0)) * 90;
-                    m_rotationDegrees = (m_rotationDegrees % 360 + 360) % 360;
-                }
-            }
+            m_rotationDegrees = StreamRotationDegrees(stream);
             const AVRational guessedRate = av_guess_frame_rate(m_format.get(), stream, nullptr);
             if (guessedRate.num > 0 && guessedRate.den > 0)
             {
@@ -1388,28 +1298,11 @@ namespace weasel
                         info.videoBitrateKbps = static_cast<int>(std::min<std::int64_t>(
                             std::numeric_limits<int>::max(), (parameters->bit_rate + 999) / 1000));
                     }
-                    const AVPacketSideData* sideData = av_packet_side_data_get(
-                        stream->codecpar->coded_side_data,
-                        stream->codecpar->nb_coded_side_data,
-                        AV_PKT_DATA_DISPLAYMATRIX);
-                    const auto* matrix = sideData
-                        ? reinterpret_cast<const std::int32_t*>(sideData->data)
-                        : nullptr;
-                    if (matrix && sideData->size >= 9 * sizeof(std::int32_t))
+                    info.rotationDegrees = StreamRotationDegrees(stream);
+                    const int quarterTurns = info.rotationDegrees / 90;
+                    if (quarterTurns % 2 != 0)
                     {
-                        const double rotation = av_display_rotation_get(matrix);
-                        if (std::isfinite(rotation))
-                        {
-                            int clockwiseDegrees = static_cast<int>(
-                                std::llround(-rotation / 90.0)) * 90;
-                            clockwiseDegrees = (clockwiseDegrees % 360 + 360) % 360;
-                            info.rotationDegrees = clockwiseDegrees;
-                            const int quarterTurns = clockwiseDegrees / 90;
-                            if (quarterTurns % 2 != 0)
-                            {
-                                std::swap(info.width, info.height);
-                            }
-                        }
+                        std::swap(info.width, info.height);
                     }
                 }
                 info.hasVideo = true;
@@ -1497,314 +1390,9 @@ namespace weasel
                                    const std::filesystem::path& outputPath,
                                    std::atomic_bool& cancelRequested,
                                    const std::function<void(double)>& onProgress,
-                                   const FfmpegLogCallback& onLog,
                                    std::string& error)
     {
-        if (onLog)
-        {
-            onLog("In-process FFmpeg audio decode/filter/WAV mux\n");
-        }
         return WritePcmWave(entry, outputPath, cancelRequested, onProgress, error);
-    }
-
-    class FfmpegFrameCompositor::Impl
-    {
-    private:
-        FilterGraphPtr              m_graph;
-        std::vector<AVFilterContext*> m_sources;
-        AVFilterContext*            m_sink = nullptr;
-        std::vector<FramePtr>       m_sourceFrames;
-        FramePtr                    m_outputFrame{ av_frame_alloc() };
-        std::vector<SequenceRenderEntry> m_entries;
-        int                         m_width = 0;
-        int                         m_height = 0;
-
-        static bool AllocateRgbaFrame(FramePtr& frame, int width, int height,
-                                      std::string& error)
-        {
-            frame.reset(av_frame_alloc());
-            if (!frame)
-            {
-                error = "Could not allocate an FFmpeg compositor frame.";
-                return false;
-            }
-            frame->format = AV_PIX_FMT_RGBA;
-            frame->width = width;
-            frame->height = height;
-            const int result = av_frame_get_buffer(frame.get(), 32);
-            if (result < 0)
-            {
-                error = "Could not allocate FFmpeg compositor pixels: " + AvError(result);
-                return false;
-            }
-            return true;
-        }
-
-    public:
-        bool open(const std::vector<SequenceRenderEntry>& entries,
-                  int width,
-                  int height,
-                  double frameRate,
-                  std::string& error)
-        {
-            if (width <= 0 || height <= 0 || frameRate <= 0.0)
-            {
-                error = "The FFmpeg compositor received an invalid output format.";
-                return false;
-            }
-            m_entries = entries;
-            m_width = width;
-            m_height = height;
-            m_graph.reset(avfilter_graph_alloc());
-            if (!m_graph)
-            {
-                error = "Could not allocate the FFmpeg video filter graph.";
-                return false;
-            }
-            const AVFilter* buffer = avfilter_get_by_name("buffer");
-            const AVFilter* sink = avfilter_get_by_name("buffersink");
-            if (!buffer || !sink)
-            {
-                error = "This FFmpeg build does not contain the required video filters.";
-                return false;
-            }
-            const AVRational rate = av_d2q(frameRate, 1000000);
-            const AVRational timeBase = av_inv_q(rate);
-            const auto createSource = [this, buffer, timeBase](const std::string& name,
-                                                               int sourceWidth,
-                                                               int sourceHeight,
-                                                               AVFilterContext*& context,
-                                                               std::string& createError)
-            {
-                std::ostringstream arguments;
-                arguments << "video_size=" << sourceWidth << "x" << sourceHeight
-                          << ":pix_fmt=" << AV_PIX_FMT_RGBA
-                          << ":time_base=" << timeBase.num << "/" << timeBase.den
-                          << ":pixel_aspect=1/1";
-                const int result = avfilter_graph_create_filter(
-                    &context, buffer, name.c_str(), arguments.str().c_str(), nullptr,
-                    m_graph.get());
-                if (result < 0)
-                {
-                    createError = "Could not create an FFmpeg video buffer source: "
-                        + AvError(result);
-                    return false;
-                }
-                return true;
-            };
-
-            AVFilterContext* baseSource = nullptr;
-            if (!createSource("baseSource", width, height, baseSource, error))
-            {
-                return false;
-            }
-            m_sources.push_back(baseSource);
-            FramePtr baseFrame;
-            if (!AllocateRgbaFrame(baseFrame, width, height, error))
-            {
-                return false;
-            }
-            m_sourceFrames.push_back(std::move(baseFrame));
-            for (std::size_t index = 0; index < entries.size(); ++index)
-            {
-                AVFilterContext* source = nullptr;
-                const int sourceWidth = std::max(1, entries[index].asset.width);
-                const int sourceHeight = std::max(1, entries[index].asset.height);
-                if (!createSource("layerSource" + std::to_string(index), sourceWidth,
-                                  sourceHeight, source, error))
-                {
-                    return false;
-                }
-                m_sources.push_back(source);
-                FramePtr sourceFrame;
-                if (!AllocateRgbaFrame(sourceFrame, sourceWidth, sourceHeight, error))
-                {
-                    return false;
-                }
-                m_sourceFrames.push_back(std::move(sourceFrame));
-            }
-            int result = avfilter_graph_create_filter(&m_sink, sink, "videoOutput",
-                                                      nullptr, nullptr, m_graph.get());
-            if (result < 0)
-            {
-                error = "Could not create the FFmpeg video buffer sink: " + AvError(result);
-                return false;
-            }
-
-            std::ostringstream description;
-            description.imbue(std::locale::classic());
-            description << "[base]null[composite0];";
-            for (std::size_t index = 0; index < entries.size(); ++index)
-            {
-                description << "[in" << index << "]null";
-                const VideoFilterLayout layout = AppendVideoFilters(
-                    description, entries[index]);
-                description << ",format=rgba[layer" << index << "];"
-                            << "[composite" << index << "][layer" << index << "]"
-                            << "overlay=x='(main_w-overlay_w)/2+"
-                            << Number(entries[index].clip.video.positionX
-                                      + layout.overlayOffsetX)
-                            << "':y='(main_h-overlay_h)/2+"
-                            << Number(entries[index].clip.video.positionY
-                                      + layout.overlayOffsetY)
-                            << "':shortest=1:format=rgb[composite" << (index + 1) << "];";
-            }
-            description << "[composite" << entries.size() << "]format=rgba[out]";
-
-            AVFilterInOut* inputs = avfilter_inout_alloc();
-            AVFilterInOut* outputs = nullptr;
-            if (!inputs)
-            {
-                error = "Could not allocate FFmpeg compositor links.";
-                return false;
-            }
-            inputs->name = av_strdup("out");
-            inputs->filter_ctx = m_sink;
-            inputs->pad_idx = 0;
-            const auto addOutput = [&outputs](const std::string& name,
-                                              AVFilterContext* context)
-            {
-                AVFilterInOut* output = avfilter_inout_alloc();
-                if (!output)
-                {
-                    return false;
-                }
-                output->name = av_strdup(name.c_str());
-                output->filter_ctx = context;
-                output->pad_idx = 0;
-                output->next = outputs;
-                outputs = output;
-                return true;
-            };
-            if (!addOutput("base", m_sources[0]))
-            {
-                avfilter_inout_free(&inputs);
-                error = "Could not allocate FFmpeg compositor links.";
-                return false;
-            }
-            for (std::size_t index = 0; index < entries.size(); ++index)
-            {
-                if (!addOutput("in" + std::to_string(index), m_sources[index + 1]))
-                {
-                    avfilter_inout_free(&inputs);
-                    avfilter_inout_free(&outputs);
-                    error = "Could not allocate FFmpeg compositor links.";
-                    return false;
-                }
-            }
-            result = avfilter_graph_parse_ptr(m_graph.get(), description.str().c_str(),
-                                              &inputs, &outputs, nullptr);
-            avfilter_inout_free(&inputs);
-            avfilter_inout_free(&outputs);
-            if (result < 0 || (result = avfilter_graph_config(m_graph.get(), nullptr)) < 0)
-            {
-                error = "Could not configure the FFmpeg video filter graph: " + AvError(result);
-                return false;
-            }
-            error.clear();
-            return true;
-        }
-
-        bool render(const std::vector<FfmpegVideoLayerFrame>& layers,
-                    std::int64_t frameIndex,
-                    std::vector<std::uint8_t>& output,
-                    std::string& error)
-        {
-            if (layers.size() != m_entries.size())
-            {
-                error = "The FFmpeg compositor layer count changed during rendering.";
-                return false;
-            }
-            for (std::size_t sourceIndex = 0; sourceIndex < m_sourceFrames.size(); ++sourceIndex)
-            {
-                AVFrame* frame = m_sourceFrames[sourceIndex].get();
-                if (av_frame_make_writable(frame) < 0)
-                {
-                    error = "Could not make an FFmpeg compositor frame writable.";
-                    return false;
-                }
-                const bool base = sourceIndex == 0;
-                const FfmpegVideoLayerFrame* layer = base ? nullptr : &layers[sourceIndex - 1];
-                const int width = frame->width;
-                const int height = frame->height;
-                for (int row = 0; row < height; ++row)
-                {
-                    std::uint8_t* destination = frame->data[0]
-                        + static_cast<std::ptrdiff_t>(row) * frame->linesize[0];
-                    if (base)
-                    {
-                        for (int column = 0; column < width; ++column)
-                        {
-                            destination[column * 4 + 0] = 0;
-                            destination[column * 4 + 1] = 0;
-                            destination[column * 4 + 2] = 0;
-                            destination[column * 4 + 3] = 255;
-                        }
-                    }
-                    else if (layer->active && layer->pixels
-                             && layer->width == width && layer->height == height)
-                    {
-                        std::memcpy(destination,
-                                    layer->pixels + static_cast<std::ptrdiff_t>(row)
-                                        * layer->strideBytes,
-                                    static_cast<std::size_t>(width) * 4);
-                    }
-                    else
-                    {
-                        std::memset(destination, 0, static_cast<std::size_t>(width) * 4);
-                    }
-                }
-                frame->pts = frameIndex;
-                const int add = av_buffersrc_add_frame_flags(
-                    m_sources[sourceIndex], frame, AV_BUFFERSRC_FLAG_KEEP_REF);
-                if (add < 0)
-                {
-                    error = "Could not feed an FFmpeg compositor layer: " + AvError(add);
-                    return false;
-                }
-            }
-
-            av_frame_unref(m_outputFrame.get());
-            const int receive = av_buffersink_get_frame(m_sink, m_outputFrame.get());
-            if (receive < 0)
-            {
-                error = "Could not receive the FFmpeg composited frame: " + AvError(receive);
-                return false;
-            }
-            output.resize(static_cast<std::size_t>(m_width) * m_height * 4);
-            for (int row = 0; row < m_height; ++row)
-            {
-                std::memcpy(output.data() + static_cast<std::size_t>(row) * m_width * 4,
-                            m_outputFrame->data[0]
-                                + static_cast<std::ptrdiff_t>(row) * m_outputFrame->linesize[0],
-                            static_cast<std::size_t>(m_width) * 4);
-            }
-            return true;
-        }
-    };
-
-    FfmpegFrameCompositor::FfmpegFrameCompositor()
-        : m_impl(std::make_unique<Impl>())
-    {
-    }
-
-    FfmpegFrameCompositor::~FfmpegFrameCompositor() = default;
-
-    bool FfmpegFrameCompositor::open(const std::vector<SequenceRenderEntry>& visualEntries,
-                                     int outputWidth,
-                                     int outputHeight,
-                                     double frameRate,
-                                     std::string& error)
-    {
-        return m_impl->open(visualEntries, outputWidth, outputHeight, frameRate, error);
-    }
-
-    bool FfmpegFrameCompositor::render(const std::vector<FfmpegVideoLayerFrame>& layers,
-                                       std::int64_t frameIndex,
-                                       std::vector<std::uint8_t>& outputRgba,
-                                       std::string& error)
-    {
-        return m_impl->render(layers, frameIndex, outputRgba, error);
     }
 
     class FfmpegStreamingVideoSource::Impl
@@ -2112,31 +1700,6 @@ namespace weasel
             return true;
         }
 
-        bool readFrame(std::vector<std::uint8_t>& output,
-                       bool& reachedEnd,
-                       std::string& error)
-        {
-            if (m_pixelFormat != AV_PIX_FMT_RGBA)
-            {
-                error = "RGBA pixels were requested from a native-format streaming graph.";
-                return false;
-            }
-            if (!pullFrame(reachedEnd, error) || reachedEnd)
-            {
-                return error.empty();
-            }
-            output.resize(static_cast<std::size_t>(m_width) * m_height * 4);
-            for (int row = 0; row < m_height; ++row)
-            {
-                std::memcpy(output.data() + static_cast<std::size_t>(row) * m_width * 4,
-                            m_frame->data[0]
-                                + static_cast<std::ptrdiff_t>(row) * m_frame->linesize[0],
-                            static_cast<std::size_t>(m_width) * 4);
-            }
-            error.clear();
-            return true;
-        }
-
         bool readNativeFrame(const void*& nativeFrame,
                              bool& reachedEnd,
                              std::string& error)
@@ -2171,13 +1734,6 @@ namespace weasel
         return m_impl->open(visualEntries, outputWidth, outputHeight,
                             frameRate, durationSeconds, error, outputPixelFormat,
                             cancelRequested);
-    }
-
-    bool FfmpegStreamingVideoSource::readFrame(std::vector<std::uint8_t>& outputRgba,
-                                                bool& reachedEnd,
-                                                std::string& error)
-    {
-        return m_impl->readFrame(outputRgba, reachedEnd, error);
     }
 
     bool FfmpegStreamingVideoSource::readNativeFrame(const void*& nativeFrame,
@@ -2941,7 +2497,6 @@ namespace weasel
         FfmpegOperationResult finish(double renderedDurationSeconds)
         {
             FfmpegOperationResult result;
-            result.started = m_headerWritten;
             result.encoderName = m_encoderName;
             result.log = m_log;
             if (!m_headerWritten)
@@ -3009,10 +2564,6 @@ namespace weasel
             return m_videoCodec ? static_cast<int>(m_videoCodec->pix_fmt) : -1;
         }
 
-        const std::string& encoderName() const noexcept
-        {
-            return m_encoderName;
-        }
     };
 
     FfmpegTimelineEncoder::FfmpegTimelineEncoder()
@@ -3057,8 +2608,4 @@ namespace weasel
         return m_impl->videoPixelFormat();
     }
 
-    const std::string& FfmpegTimelineEncoder::encoderName() const noexcept
-    {
-        return m_impl->encoderName();
-    }
 }

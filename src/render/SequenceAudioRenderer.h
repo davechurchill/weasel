@@ -28,16 +28,10 @@ namespace weasel
         SequenceAudioRenderState state = SequenceAudioRenderState::Idle;
         std::filesystem::path    outputPath;
         std::string              message;
-        std::string              log;
         std::uint64_t            generation = 0;
 
-        // These values are safe to read from the UI thread through status()
-        // while the linked-library renderer runs.
+        // Safe to read from the UI thread through status() while rendering.
         double                   progress = 0.0;
-        double                   processedSeconds = 0.0;
-        double                   durationSeconds = 0.0;
-        // Negative until enough progress has arrived to estimate a render rate.
-        double                   estimatedRemainingSeconds = -1.0;
     };
 
     class SequenceAudioRenderer

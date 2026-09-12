@@ -2,13 +2,14 @@
 
 #include "app/Editor.h"
 #include "render/SequenceAudioController.h"
+#include "ui/UiUtils.h"
+#include "util/TextUtils.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cmath>
-#include <cstdio>
 #include <string>
 #include <utility>
 
@@ -24,12 +25,6 @@ namespace
     constexpr float MaximumTimelinePixelsPerSecond = 4000.0f;
     constexpr float TimelineZoomWheelStep = 1.25f;
     constexpr float TrimHandleWidth = 7.0f;
-
-    ImGuiWindowFlags FixedPanelFlags()
-    {
-        return ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
-            | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    }
 
     struct TimelineLayerHeights
     {
@@ -85,18 +80,6 @@ namespace
             }
         }
         return static_cast<int>(sequence.tracks.size()) - 1;
-    }
-
-    std::string TimeText(double seconds)
-    {
-        seconds = std::max(0.0, seconds);
-        const int wholeSeconds = static_cast<int>(seconds);
-        const int minutes = wholeSeconds / 60;
-        const int remainingSeconds = wholeSeconds % 60;
-        const int centiseconds = static_cast<int>(std::floor((seconds - wholeSeconds) * 100.0 + 0.5));
-        char buffer[32]{};
-        std::snprintf(buffer, sizeof(buffer), "%02d:%02d.%02d", minutes, remainingSeconds, centiseconds % 100);
-        return buffer;
     }
 
     int TimelineRulerTickSeconds(float pixelsPerSecond)
@@ -370,7 +353,7 @@ namespace weasel
         ImGui::SetNextWindowPos(position, ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::Begin("SEQUENCE", nullptr, FixedPanelFlags() | ImGuiWindowFlags_NoTitleBar
+        ImGui::Begin("SEQUENCE", nullptr, weasel::FixedPanelWindowFlags() | ImGuiWindowFlags_NoTitleBar
             | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::SetScrollY(0.0f);
 
@@ -564,7 +547,7 @@ namespace weasel
                                   major ? palette.majorGrid : palette.minorGrid, major ? 1.2f : 1.0f);
                 if (major)
                 {
-                    const std::string label = TimeText(static_cast<double>(second));
+                    const std::string label = weasel::FormatTimelineTime(static_cast<double>(second));
                     drawList->AddText(ImVec2(x + 4.0f, canvasPosition.y + 5.0f), palette.rulerText, label.c_str());
                 }
             }
@@ -882,7 +865,7 @@ namespace weasel
                     else
                     {
                         drawList->AddText(ImVec2(x + TrimHandleWidth + 5.0f, y + 8.0f), IM_COL32(246, 249, 255, 255), label.c_str());
-                        const std::string durationLabel = TimeText(duration);
+                        const std::string durationLabel = weasel::FormatTimelineTime(duration);
                         drawList->AddText(ImVec2(x + TrimHandleWidth + 5.0f, y + 26.0f), IM_COL32(225, 236, 252, 205), durationLabel.c_str());
                     }
                     drawList->PopClipRect();

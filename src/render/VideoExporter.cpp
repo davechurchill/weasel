@@ -1,6 +1,6 @@
 #include "render/VideoExporter.h"
 
-#include "media/MediaTools.h"
+#include "util/FileUtils.h"
 #include "render/FfmpegRenderer.h"
 #include "render/SequenceRenderPlan.h"
 #include "render/VideoRenderer.h"
@@ -124,7 +124,6 @@ namespace weasel
         {
             std::lock_guard lock(m_mutex);
             generation = m_nextGeneration++;
-            m_backendDescription = "Linked FFmpeg libraries (no external process)";
             m_pendingPreviewFrame.reset();
             m_exportStartedAt = std::chrono::steady_clock::now();
             m_exportEndedAt.reset();
@@ -132,6 +131,7 @@ namespace weasel
                 ExportState::Running, outputPath, "Exporting...", {},
                 0.0, 0.0, std::max(0.05, prepared.duration()), false
             };
+            m_status.backendDescription = "Linked FFmpeg libraries (no external process)";
         }
         try
         {
@@ -216,7 +216,6 @@ namespace weasel
     {
         std::lock_guard lock(m_mutex);
         ExportStatus result = m_status;
-        result.backendDescription = m_backendDescription;
         if (m_exportStartedAt)
         {
             if (!m_exportEndedAt && result.state != ExportState::Running)
@@ -244,7 +243,7 @@ namespace weasel
         const bool direct = project.exportSettings().renderer == ExportRenderer::Ffmpeg;
         const double duration = std::max(0.05, project.duration());
         const auto startedAt = std::chrono::steady_clock::now();
-        const std::filesystem::path stagingPath = MediaStagingPath(
+        const std::filesystem::path stagingPath = StagingFilePath(
             outputPath, "export", generation);
         RemoveFileQuietly(stagingPath);
 

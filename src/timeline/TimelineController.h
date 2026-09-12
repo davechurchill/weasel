@@ -151,7 +151,6 @@ namespace weasel
         explicit TimelineController(ProjectData& project, std::function<void()> onCommittedProjectChange = {});
 
         Selection& selection();
-        const Selection& selection() const;
         const std::vector<int>& selectedAssetIds() const noexcept;
         bool isAssetSelected(int assetId) const;
         const std::vector<int>& selectedClipIds() const noexcept;

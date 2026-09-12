@@ -3,6 +3,7 @@
 #include "render/PreviewController.h"
 #include "render/SequenceAudioController.h"
 #include "app/Editor.h"
+#include "util/TextUtils.h"
 
 #include <imgui.h>
 
@@ -18,29 +19,6 @@ namespace
     constexpr float DefaultTimelineLayerHeight = 58.0f;
     constexpr float MinimumTimelineLayerHeight = 48.0f;
     constexpr float MaximumTimelineLayerHeight = 200.0f;
-
-    std::string EstimatedTimeText(double seconds)
-    {
-        if (!std::isfinite(seconds) || seconds < 0.0)
-        {
-            return "Calculating...";
-        }
-
-        const int totalSeconds = static_cast<int>(std::ceil(seconds));
-        const int hours = totalSeconds / 3600;
-        const int minutes = (totalSeconds % 3600) / 60;
-        const int remainingSeconds = totalSeconds % 60;
-        char buffer[32]{};
-        if (hours > 0)
-        {
-            std::snprintf(buffer, sizeof(buffer), "%d:%02d:%02d", hours, minutes, remainingSeconds);
-        }
-        else
-        {
-            std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, remainingSeconds);
-        }
-        return buffer;
-    }
 
     void DrawGreenProgressBar(float progress, const char* overlay)
     {
@@ -490,7 +468,8 @@ namespace weasel
                         const double remainingSeconds = progress > 0.001f
                             ? elapsedSeconds * (1.0 - static_cast<double>(progress)) / static_cast<double>(progress)
                             : -1.0;
-                        ImGui::TextDisabled("Time remaining: %s", EstimatedTimeText(remainingSeconds).c_str());
+                        ImGui::TextDisabled("Time remaining: %s",
+                                            FormatEstimatedTime(remainingSeconds).c_str());
                     }
                     if (ImGui::IsItemHovered())
                     {

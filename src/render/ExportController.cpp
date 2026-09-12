@@ -1,4 +1,6 @@
 #include "render/ExportController.h"
+#include "ui/UiUtils.h"
+#include "util/TextUtils.h"
 
 #include <SFML/Graphics.hpp>
 #include <imgui.h>
@@ -6,8 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
-#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -16,29 +16,6 @@
 
 namespace
 {
-    std::string EstimatedTimeText(double seconds)
-    {
-        if (!std::isfinite(seconds) || seconds < 0.0)
-        {
-            return "Calculating...";
-        }
-
-        const int totalSeconds = static_cast<int>(std::ceil(seconds));
-        const int hours = totalSeconds / 3600;
-        const int minutes = (totalSeconds % 3600) / 60;
-        const int remainingSeconds = totalSeconds % 60;
-        char buffer[32]{};
-        if (hours > 0)
-        {
-            std::snprintf(buffer, sizeof(buffer), "%d:%02d:%02d", hours, minutes, remainingSeconds);
-        }
-        else
-        {
-            std::snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes, remainingSeconds);
-        }
-        return buffer;
-    }
-
     std::string ProjectedFileSizeText(std::uint64_t bytes)
     {
         if (bytes == 0)
@@ -61,17 +38,9 @@ namespace
         return buffer;
     }
 
-    ImTextureID ImGuiTextureId(unsigned int textureHandle)
-    {
-        static_assert(sizeof(textureHandle) <= sizeof(ImTextureID));
-        ImTextureID textureId{};
-        std::memcpy(&textureId, &textureHandle, sizeof(textureHandle));
-        return textureId;
-    }
-
     void DrawTexture(const sf::Texture& texture, const ImVec2& size)
     {
-        const ImTextureID textureId = ImGuiTextureId(texture.getNativeHandle());
+        const ImTextureID textureId = weasel::ImGuiTextureId(texture.getNativeHandle());
 #if IMGUI_VERSION_NUM >= 19200
         ImGui::Image(ImTextureRef(textureId), size);
 #else
@@ -207,8 +176,10 @@ namespace weasel
         {
             ImGui::PopStyleColor();
         }
-        ImGui::TextDisabled("Time remaining: %s", EstimatedTimeText(exportStatus.estimatedRemainingSeconds).c_str());
-        ImGui::TextDisabled("Total elapsed: %s", EstimatedTimeText(exportStatus.elapsedSeconds).c_str());
+        ImGui::TextDisabled("Time remaining: %s",
+                            FormatEstimatedTime(exportStatus.estimatedRemainingSeconds).c_str());
+        ImGui::TextDisabled("Total elapsed: %s",
+                            FormatEstimatedTime(exportStatus.elapsedSeconds).c_str());
         ImGui::TextDisabled("Projected file size: %s", ProjectedFileSizeText(exportStatus.projectedFileSizeBytes).c_str());
 
         if (!exportStatus.message.empty())

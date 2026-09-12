@@ -1,15 +1,13 @@
 #include "ui/ClipInspector.h"
 
 #include "app/Editor.h"
+#include "util/TextUtils.h"
 
 #include <imgui.h>
 
 #include <algorithm>
-#include <array>
-#include <cctype>
 #include <cstddef>
 #include <cmath>
-#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,36 +17,6 @@ namespace
     constexpr double MinimumClipDuration = 0.05;
     constexpr double MinimumCropPercentage = weasel::ClipVideoSettings::MinimumCropInset * 100.0;
     constexpr double MaximumCropPercentage = weasel::ClipVideoSettings::MaximumCropInset * 100.0;
-
-    std::string Trim(std::string value)
-    {
-        const auto isNotWhitespace = [](unsigned char character)
-        {
-            return !std::isspace(character);
-        };
-        value.erase(value.begin(), std::find_if(value.begin(), value.end(), isNotWhitespace));
-        value.erase(std::find_if(value.rbegin(), value.rend(), isNotWhitespace).base(), value.end());
-        return value;
-    }
-
-    void CopyToBuffer(std::array<char, 128>& buffer, const std::string& value)
-    {
-        std::fill(buffer.begin(), buffer.end(), '\0');
-        const std::size_t length = std::min(value.size(), buffer.size() - 1);
-        std::copy_n(value.data(), length, buffer.data());
-    }
-
-    std::string TimeText(double seconds)
-    {
-        seconds = std::max(0.0, seconds);
-        const int wholeSeconds = static_cast<int>(seconds);
-        const int minutes = wholeSeconds / 60;
-        const int remainingSeconds = wholeSeconds % 60;
-        const int centiseconds = static_cast<int>(std::floor((seconds - wholeSeconds) * 100.0 + 0.5));
-        char buffer[32]{};
-        std::snprintf(buffer, sizeof(buffer), "%02d:%02d.%02d", minutes, remainingSeconds, centiseconds % 100);
-        return buffer;
-    }
 
     bool DragDouble(
         const char* label,
@@ -420,7 +388,7 @@ namespace weasel
                         if (ImGui::Selectable(preset.name.c_str(), selected))
                         {
                             m_selectedPresetIndex = static_cast<int>(index);
-                            CopyToBuffer(m_presetNameInput, preset.name);
+                            CopyTextToBuffer(m_presetNameInput, preset.name);
                         }
                         if (selected)
                         {
@@ -434,7 +402,7 @@ namespace weasel
                 ImGui::InputText("Preset name", m_presetNameInput.data(), m_presetNameInput.size());
                 if (ImGui::Button("Save Preset"))
                 {
-                    const std::string presetName = Trim(m_presetNameInput.data());
+                    const std::string presetName = TrimWhitespace(m_presetNameInput.data());
                     if (!presetName.empty())
                     {
                         std::string error;
@@ -443,7 +411,7 @@ namespace weasel
                                 ClipPresetLibrary::fromClip(presetName, *clip), storedIndex, error))
                         {
                             m_selectedPresetIndex = static_cast<int>(storedIndex);
-                            CopyToBuffer(m_presetNameInput, presetName);
+                            CopyTextToBuffer(m_presetNameInput, presetName);
                         }
                     }
                 }
@@ -471,7 +439,7 @@ namespace weasel
                             static_cast<std::size_t>(m_selectedPresetIndex), error))
                     {
                         m_selectedPresetIndex = -1;
-                        CopyToBuffer(m_presetNameInput, "");
+                        CopyTextToBuffer(m_presetNameInput, "");
                     }
                 }
                 ImGui::EndDisabled();
@@ -683,7 +651,7 @@ namespace weasel
         }
 
         ImGui::TextWrapped("%s", asset ? asset->name.c_str() : "Missing media");
-        ImGui::TextDisabled("Clip duration: %s", TimeText(clip->duration()).c_str());
+        ImGui::TextDisabled("Clip duration: %s", FormatTimelineTime(clip->duration()).c_str());
 
         if (asset && asset->isStillImage())
         {

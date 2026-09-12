@@ -2,25 +2,15 @@
 
 #include "media/FfmpegBackend.h"
 #include "media/MediaDecoder.h"
+#include "util/TextUtils.h"
 
 #include <algorithm>
-#include <cctype>
 #include <initializer_list>
 #include <optional>
 #include <string_view>
 
 namespace
 {
-    std::string LowercaseExtension(const std::filesystem::path& mediaPath)
-    {
-        std::string extension = mediaPath.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        });
-        return extension;
-    }
-
     bool HasExtension(const std::string& extension, std::initializer_list<std::string_view> extensions)
     {
         return std::any_of(extensions.begin(), extensions.end(), [&extension](std::string_view candidate)
@@ -31,7 +21,7 @@ namespace
 
     std::optional<weasel::MediaKind> ClassifyExtension(const std::filesystem::path& mediaPath)
     {
-        const std::string extension = LowercaseExtension(mediaPath);
+        const std::string extension = weasel::LowercaseAscii(mediaPath.extension().string());
         if (HasExtension(extension, {
                 ".avif", ".bmp", ".dib", ".ico", ".jpeg", ".jpg", ".jpe", ".jp2",
                 ".pbm", ".pgm", ".png", ".ppm", ".tif", ".tiff", ".webp"

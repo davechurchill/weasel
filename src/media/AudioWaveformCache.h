@@ -3,13 +3,11 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -58,10 +56,7 @@ namespace weasel
     struct AudioWaveformStatus
     {
         AudioWaveformState                   state = AudioWaveformState::Idle;
-        std::string                          message;
-        std::string                          error;
         std::uint64_t                        generation = 0;
-        std::size_t                          peakCount = 0;
         // While Generating, this is the completed portion of requested tiles.
         // It remains zero for queued/failed work and reaches one when Ready.
         float                                progress = 0.0f;
@@ -98,7 +93,7 @@ namespace weasel
 
         void workerMain();
         void publishProgress(const Request& request, float progress);
-        void publishFailure(const Request& request, std::string message, std::string error);
+        void publishFailure(const Request& request);
         void publishReady(const Request& request, std::shared_ptr<const AudioWaveform> waveform);
 
     public:

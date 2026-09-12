@@ -41,11 +41,6 @@ namespace weasel
         return m_selection;
     }
 
-    const TimelineController::Selection& TimelineController::selection() const
-    {
-        return m_selection;
-    }
-
     const std::vector<int>& TimelineController::selectedAssetIds() const noexcept
     {
         return m_selection.assetIds;

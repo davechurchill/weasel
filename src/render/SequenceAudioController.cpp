@@ -1,6 +1,6 @@
 #include "render/SequenceAudioController.h"
 
-#include "media/MediaTools.h"
+#include "util/FileUtils.h"
 
 #include <SFML/Audio/InputSoundFile.hpp>
 #include <SFML/Audio/SoundSource.hpp>
@@ -936,8 +936,7 @@ namespace weasel
             // clip path regenerates it on the next pass.
             if (!failedPath.empty())
             {
-                std::error_code removeError;
-                std::filesystem::remove(failedPath, removeError);
+                RemoveFileQuietly(failedPath);
             }
         }
         else
@@ -1175,8 +1174,7 @@ namespace weasel
                 continue;
             }
 
-            std::error_code removeError;
-            std::filesystem::remove(entry.path(), removeError);
+            RemoveFileQuietly(entry.path());
         }
     }
 }

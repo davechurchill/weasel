@@ -1,4 +1,4 @@
-#include "media/MediaTools.h"
+#include "util/FileUtils.h"
 
 #include <cstdio>
 #include <system_error>
@@ -14,9 +14,9 @@
 
 namespace weasel
 {
-    std::filesystem::path MediaStagingPath(const std::filesystem::path& outputPath,
-                                           std::string_view operation,
-                                           std::uint64_t generation)
+    std::filesystem::path StagingFilePath(const std::filesystem::path& outputPath,
+                                          std::string_view operation,
+                                          std::uint64_t generation)
     {
         std::filesystem::path filename = outputPath.stem();
         filename += "." + std::string(operation) + "-" + std::to_string(generation) + ".part";

@@ -1,4 +1,6 @@
 #include "render/VideoCompositor.h"
+#include "util/ColorUtils.h"
+#include "util/PathUtils.h"
 
 #include <SFML/Graphics/Color.hpp>
 #include <SFML/Graphics/Image.hpp>
@@ -143,13 +145,6 @@ namespace
             && ParseFiniteFloat(tokens[0], value[0])
             && ParseFiniteFloat(tokens[1], value[1])
             && ParseFiniteFloat(tokens[2], value[2]);
-    }
-
-    std::filesystem::path NormalizeLutPath(const std::filesystem::path& path)
-    {
-        std::error_code error;
-        const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-        return error ? path.lexically_normal() : absolute.lexically_normal();
     }
 
     CubeLutFileStatus GetCubeLutFileStatus(const std::filesystem::path& path)
@@ -464,37 +459,11 @@ namespace
         return pixels;
     }
 
-    std::array<double, 3> TemperatureRgb(double kelvin)
-    {
-        const double temperature = std::clamp(kelvin, 1000.0, 40000.0) / 100.0;
-        double red = 0.0;
-        double green = 0.0;
-        double blue = 0.0;
-        if (temperature <= 66.0)
-        {
-            red = 255.0;
-            green = 99.4708025861 * std::log(std::max(temperature, 1.0)) - 161.1195681661;
-            blue = temperature <= 19.0
-                ? 0.0
-                : 138.5177312231 * std::log(temperature - 10.0) - 305.0447927307;
-        }
-        else
-        {
-            red = 329.698727446 * std::pow(temperature - 60.0, -0.1332047592);
-            green = 288.1221695283 * std::pow(temperature - 60.0, -0.0755148492);
-            blue = 255.0;
-        }
-        return {
-            std::clamp(red, 0.0, 255.0) / 255.0,
-            std::clamp(green, 0.0, 255.0) / 255.0,
-            std::clamp(blue, 0.0, 255.0) / 255.0
-        };
-    }
 }
 
 weasel::CubeLutLoad weasel::FindCubeLut(const std::filesystem::path& requestedPath)
 {
-    const std::filesystem::path normalizedPath = NormalizeLutPath(requestedPath);
+    const std::filesystem::path normalizedPath = NormalizedAbsolutePath(requestedPath);
     const std::string cacheKey = normalizedPath.generic_string();
     CubeLutCache& cache = CachedCubeLuts();
     std::scoped_lock lock(cache.mutex);
@@ -1103,8 +1072,8 @@ namespace weasel
             int targetIndex = 0;
             if (hasBaseGrade)
             {
-                const std::array<double, 3> reference = TemperatureRgb(6500.0);
-                const std::array<double, 3> temperature = TemperatureRgb(layer.video.temperature);
+                const std::array<double, 3> reference = weasel::TemperatureRgb(6500.0);
+                const std::array<double, 3> temperature = weasel::TemperatureRgb(layer.video.temperature);
                 m_shader.setUniform("brightness", static_cast<float>(layer.video.brightness));
                 m_shader.setUniform("contrast", static_cast<float>(layer.video.contrast));
                 m_shader.setUniform("hueRadians", static_cast<float>(

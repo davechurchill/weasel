@@ -23,9 +23,10 @@
     <ClCompile Include="..\src\media\MediaDecoder.cpp" />
     <ClCompile Include="..\src\media\MediaImportController.cpp" />
     <ClCompile Include="..\src\media\MediaThumbnailController.cpp" />
-    <ClCompile Include="..\src\media\MediaTools.cpp" />
+    <ClCompile Include="..\src\util\FileUtils.cpp" />
     <ClCompile Include="..\src\media\MediaProbe.cpp" />
     <ClCompile Include="..\src\render\PreviewController.cpp" />
+    <ClCompile Include="..\src\render\RenderPreparation.cpp" />
     <ClCompile Include="..\src\media\PreviewFrameCache.cpp" />
     <ClCompile Include="..\src\app\RecentProjects.cpp" />
     <ClCompile Include="..\src\project\EditHistory.cpp" />
@@ -49,6 +50,7 @@
     <ClInclude Include="..\src\media\MediaThumbnailController.h" />
     <ClInclude Include="..\src\media\AudioWaveformCache.h" />
     <ClInclude Include="..\src\media\FfmpegBackend.h" />
+    <ClInclude Include="..\src\media\FfmpegInternal.h" />
     <ClInclude Include="..\src\project\ClipPresetLibrary.h" />
     <ClInclude Include="..\src\ui\ClipInspector.h" />
     <ClInclude Include="..\src\project\ClipSettings.hpp" />
@@ -57,8 +59,9 @@
     <ClInclude Include="..\src\render\VideoRenderer.h" />
     <ClInclude Include="..\src\media\MediaDecoder.h" />
     <ClInclude Include="..\src\media\MediaProbe.h" />
-    <ClInclude Include="..\src\media\MediaTools.h" />
+    <ClInclude Include="..\src\util\FileUtils.h" />
     <ClInclude Include="..\src\render\PreviewController.h" />
+    <ClInclude Include="..\src\render\RenderPreparation.h" />
     <ClInclude Include="..\src\media\PreviewFrameCache.h" />
     <ClInclude Include="..\src\app\RecentProjects.h" />
     <ClInclude Include="..\src\project\ProjectFile.hpp" />
@@ -71,6 +74,10 @@
     <ClInclude Include="..\src\render\SequenceRenderPlan.h" />
     <ClInclude Include="..\src\timeline\TimelineController.h" />
     <ClInclude Include="..\src\ui\TimelineView.h" />
+    <ClInclude Include="..\src\ui\UiUtils.h" />
+    <ClInclude Include="..\src\util\PathUtils.h" />
+    <ClInclude Include="..\src\util\ColorUtils.h" />
+    <ClInclude Include="..\src\util\TextUtils.h" />
     <ClInclude Include="..\src\app\Themes.hpp" />
     <ClInclude Include="..\src\timeline\WaveformAlignment.h" />
     <ClInclude Include="..\src\app\Editor.h" />

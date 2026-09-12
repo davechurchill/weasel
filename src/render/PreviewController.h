@@ -58,6 +58,5 @@ namespace weasel
         const std::string& error() const;
 
         PreviewSettings& settings();
-        const PreviewSettings& settings() const;
     };
 }

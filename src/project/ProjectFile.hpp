@@ -2,26 +2,20 @@
 
 #include "project/ClipSettingsJson.hpp"
 #include "project/ProjectData.h"
+#include "util/FileUtils.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include <utility>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#endif
 
 namespace weasel::ProjectFileDetail
 {
@@ -108,53 +102,6 @@ namespace weasel::ProjectFileDetail
             return MediaKind::Video;
         }
         throw std::runtime_error("Project asset has an invalid kind.");
-    }
-
-    inline std::filesystem::path ProjectStagingPath(const std::filesystem::path& destination)
-    {
-        // Keep the staging file in the same directory so replacement is an
-        // atomic same-volume operation. The clock suffix prevents ordinary
-        // concurrent saves from sharing a staging name.
-        const auto nonce = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        const std::string suffix = ".writing-" + std::to_string(
-            static_cast<unsigned long long>(std::hash<std::string>{}(destination.string())))
-            + "-" + std::to_string(nonce);
-        return destination.parent_path()
-            / (destination.filename().string() + suffix + ".tmp");
-    }
-
-    inline void RemoveFileQuietly(const std::filesystem::path& path) noexcept
-    {
-        std::error_code ignored;
-        std::filesystem::remove(path, ignored);
-    }
-
-    inline bool ReplaceProjectFile(const std::filesystem::path& staging,
-                                   const std::filesystem::path& destination,
-                                   std::string& error)
-    {
-#ifdef _WIN32
-        // std::filesystem::rename cannot replace an existing file on Windows.
-        // MoveFileEx performs the same-directory replacement without exposing
-        // a window where the destination has been removed.
-        if (!::MoveFileExW(staging.c_str(), destination.c_str(),
-                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        {
-            error = "Could not replace the project file: Windows error "
-                + std::to_string(static_cast<unsigned long>(::GetLastError())) + ".";
-            return false;
-        }
-        return true;
-#else
-        std::error_code filesystemError;
-        std::filesystem::rename(staging, destination, filesystemError);
-        if (filesystemError)
-        {
-            error = "Could not replace the project file: " + filesystemError.message();
-            return false;
-        }
-        return true;
-#endif
     }
 
     inline void RemoveDefaultValues(Json& storedSettings, const Json& storedDefaults)
@@ -353,8 +300,11 @@ namespace weasel
             document["sequence"]["tracks"].push_back(std::move(storedTrack));
         }
 
-        const std::filesystem::path staging = ProjectFileDetail::ProjectStagingPath(destination);
-        ProjectFileDetail::RemoveFileQuietly(staging);
+        const auto nonce = std::chrono::high_resolution_clock::now()
+            .time_since_epoch().count();
+        const std::filesystem::path staging = StagingFilePath(
+            destination, "writing", static_cast<std::uint64_t>(nonce));
+        RemoveFileQuietly(staging);
         std::ofstream stream(staging, std::ios::out | std::ios::trunc);
         if (!stream)
         {
@@ -367,21 +317,21 @@ namespace weasel
         if (!stream)
         {
             stream.close();
-            ProjectFileDetail::RemoveFileQuietly(staging);
+            RemoveFileQuietly(staging);
             error = "Could not finish writing the project file.";
             return false;
         }
         stream.close();
         if (!stream)
         {
-            ProjectFileDetail::RemoveFileQuietly(staging);
+            RemoveFileQuietly(staging);
             error = "Could not close the project staging file.";
             return false;
         }
 
-        if (!ProjectFileDetail::ReplaceProjectFile(staging, destination, error))
+        if (!PublishStagingFile(staging, destination, "the project file", error))
         {
-            ProjectFileDetail::RemoveFileQuietly(staging);
+            RemoveFileQuietly(staging);
             return false;
         }
 

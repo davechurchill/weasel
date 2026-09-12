@@ -1,9 +1,10 @@
 #include "app/RecentProjects.h"
+#include "util/PathUtils.h"
+#include "util/TextUtils.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <exception>
 #include <fstream>
 #include <system_error>
@@ -14,14 +15,6 @@ namespace
     using Json = nlohmann::json;
     constexpr int RecentProjectsSchemaVersion = 1;
 
-    std::string Lowercase(std::string value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        });
-        return value;
-    }
 }
 
 namespace weasel
@@ -31,23 +24,11 @@ namespace weasel
     {
     }
 
-    std::filesystem::path RecentProjects::normalizePath(const std::filesystem::path& path)
-    {
-        if (path.empty())
-        {
-            return {};
-        }
-
-        std::error_code error;
-        const std::filesystem::path absolutePath = std::filesystem::absolute(path, error);
-        return (error ? path : absolutePath).lexically_normal();
-    }
-
     std::string RecentProjects::pathKey(const std::filesystem::path& path)
     {
         std::string key = path.generic_string();
 #ifdef _WIN32
-        key = Lowercase(std::move(key));
+        key = LowercaseAscii(std::move(key));
 #endif
         return key;
     }
@@ -93,7 +74,8 @@ namespace weasel
                     continue;
                 }
 
-                const std::filesystem::path normalizedDirectory = normalizePath(storedDirectory.get<std::string>());
+                const std::filesystem::path normalizedDirectory =
+                    NormalizedAbsolutePath(storedDirectory.get<std::string>());
                 if (normalizedDirectory.empty())
                 {
                     continue;
@@ -143,7 +125,7 @@ namespace weasel
 
     bool RecentProjects::remember(const std::filesystem::path& projectDirectory, std::string& error)
     {
-        const std::filesystem::path normalizedDirectory = normalizePath(projectDirectory);
+        const std::filesystem::path normalizedDirectory = NormalizedAbsolutePath(projectDirectory);
         if (normalizedDirectory.empty())
         {
             error = "Cannot remember an empty project folder.";

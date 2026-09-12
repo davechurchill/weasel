@@ -389,8 +389,4 @@ namespace weasel
         return m_settings;
     }
 
-    const PreviewSettings& PreviewController::settings() const
-    {
-        return m_settings;
-    }
 }

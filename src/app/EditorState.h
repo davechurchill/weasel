@@ -36,9 +36,7 @@ namespace weasel
         ~EditorState() = default;
 
         ProjectData& project() noexcept;
-        const ProjectData& project() const noexcept;
         TimelineController& timeline() noexcept;
-        const TimelineController& timeline() const noexcept;
 
         const std::filesystem::path& projectDirectory() const noexcept;
         bool hasProjectDirectory() const noexcept;

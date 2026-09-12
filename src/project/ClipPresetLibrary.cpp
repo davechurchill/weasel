@@ -1,10 +1,10 @@
 #include "project/ClipPresetLibrary.h"
 #include "project/ClipSettingsJson.hpp"
+#include "util/TextUtils.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <exception>
 #include <fstream>
 #include <stdexcept>
@@ -16,25 +16,6 @@ namespace
     using json = nlohmann::json;
     constexpr int ClipPresetSchemaVersion = 1;
 
-    std::string Lowercase(std::string value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        });
-        return value;
-    }
-
-    std::string Trim(std::string value)
-    {
-        const auto isNotWhitespace = [](unsigned char character)
-        {
-            return !std::isspace(character);
-        };
-        value.erase(value.begin(), std::find_if(value.begin(), value.end(), isNotWhitespace));
-        value.erase(std::find_if(value.rbegin(), value.rend(), isNotWhitespace).base(), value.end());
-        return value;
-    }
 }
 
 namespace weasel
@@ -95,7 +76,7 @@ namespace weasel
                 }
 
                 ClipPreset preset;
-                preset.name = Trim(storedPreset.at("name").get<std::string>());
+                preset.name = TrimWhitespace(storedPreset.at("name").get<std::string>());
                 if (preset.name.empty())
                 {
                     throw std::runtime_error("Clip preset name cannot be empty.");
@@ -103,10 +84,10 @@ namespace weasel
                 preset.video = ClipSettingsJson::ReadVideoSettings(storedPreset);
                 preset.effects = ClipSettingsJson::ReadEffectsSettings(storedPreset);
 
-                const std::string normalizedName = Lowercase(preset.name);
+                const std::string normalizedName = LowercaseAscii(preset.name);
                 const bool duplicate = std::any_of(m_presets.begin(), m_presets.end(), [&](const ClipPreset& existing)
                 {
-                    return Lowercase(existing.name) == normalizedName;
+                    return LowercaseAscii(existing.name) == normalizedName;
                 });
                 if (duplicate)
                 {
@@ -176,7 +157,7 @@ namespace weasel
 
     bool ClipPresetLibrary::upsert(ClipPreset preset, std::size_t& storedIndex, std::string& error)
     {
-        preset.name = Trim(std::move(preset.name));
+        preset.name = TrimWhitespace(std::move(preset.name));
         if (preset.name.empty())
         {
             error = "Enter a preset name.";
@@ -184,10 +165,10 @@ namespace weasel
         }
 
         const std::vector<ClipPreset> previousPresets = m_presets;
-        const std::string normalizedName = Lowercase(preset.name);
+        const std::string normalizedName = LowercaseAscii(preset.name);
         const auto existing = std::find_if(m_presets.begin(), m_presets.end(), [&](const ClipPreset& storedPreset)
         {
-            return Lowercase(storedPreset.name) == normalizedName;
+            return LowercaseAscii(storedPreset.name) == normalizedName;
         });
         std::size_t newIndex = 0;
         if (existing != m_presets.end())

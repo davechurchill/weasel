@@ -176,8 +176,6 @@ namespace weasel
         ProjectPanelTab           m_activeProjectPanelTab = ProjectPanelTab::Project;
         int&                      m_selectedAssetId;
         bool                      m_playing = false;
-        // Waveform extraction can be expensive, so leave it opt-in until the
-        // user enables it from the Sequence tab.
 
         // These are deliberately application-layout settings, not project settings.
         // Panels remain fixed in place while the seams between them are dragged.

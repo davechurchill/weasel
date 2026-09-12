@@ -1,7 +1,7 @@
 #include "render/VideoRenderer.h"
 
 #include "media/MediaDecoder.h"
-#include "render/SequenceRenderPlan.h"
+#include "render/RenderPreparation.h"
 #include "render/VideoCompositor.h"
 
 #include <SFML/Graphics/Image.hpp>
@@ -31,26 +31,14 @@ namespace weasel
             return result;
         }
 
-        const int width = request.project.sequence().width;
-        const int height = request.project.sequence().height;
-        const double frameRate = request.project.sequence().fps;
-        const double duration = std::max(0.05, request.project.duration());
-        if (width <= 0 || height <= 0 || frameRate <= 0.0)
-        {
-            result.rendererError = "The sequence has an invalid output format.";
-            return result;
-        }
-
-        SequenceRenderPlan plan;
-        SequenceRenderPlanOptions options;
-        options.validateLuts = true;
-        if (!SequenceRenderPlan::build(request.project, plan, result.rendererError, options))
+        PreparedSequenceRender prepared;
+        if (!PrepareSequenceRender(request.project, prepared, result.rendererError))
         {
             return result;
         }
 
         std::unordered_map<std::string, CubeLutLoad> luts;
-        for (const SequenceRenderEntry& entry : plan.entries())
+        for (const SequenceRenderEntry& entry : prepared.plan.entries())
         {
             if (!entry.includeVideo || entry.clip.video.lutPath.empty())
             {
@@ -72,18 +60,9 @@ namespace weasel
         }
 
         FfmpegTimelineEncoder encoder;
-        FfmpegTimelineEncoder::Configuration configuration;
-        configuration.outputPath = request.stagingPath;
-        configuration.settings = request.project.exportSettings();
-        configuration.width = width;
-        configuration.height = height;
-        configuration.frameRate = frameRate;
-        configuration.durationSeconds = duration;
-        configuration.audioEntries = request.audioEntriesOverride
-            ? *request.audioEntriesOverride : plan.audioEntries();
-        configuration.cancelRequested = &request.cancelRequested;
-        configuration.onLog = callbacks.onLog;
-        if (!encoder.open(configuration, result.rendererError))
+        if (!OpenTimelineEncoder(request.project, prepared, request.stagingPath,
+                                 request.cancelRequested, request.audioEntriesOverride,
+                                 callbacks.onLog, encoder, result.rendererError))
         {
             return result;
         }
@@ -101,7 +80,7 @@ namespace weasel
         MediaDecoder decoder;
         VideoCompositor compositor;
         const long long frameCount = std::max(1LL, static_cast<long long>(
-            std::ceil(duration * frameRate - 0.000000001)));
+            std::ceil(prepared.duration * prepared.frameRate - 0.000000001)));
         std::vector<const SequenceRenderEntry*> activeEntries;
         std::vector<VideoCompositorLayer> layers;
         std::unordered_set<std::uint64_t> activeStreamIds;
@@ -121,10 +100,10 @@ namespace weasel
                 break;
             }
 
-            const double timelineTime = static_cast<double>(frameIndex) / frameRate;
+            const double timelineTime = static_cast<double>(frameIndex) / prepared.frameRate;
             activeEntries.clear();
             activeStreamIds.clear();
-            for (const SequenceRenderEntry& entry : plan.entries())
+            for (const SequenceRenderEntry& entry : prepared.plan.entries())
             {
                 if (entry.includeVideo && timelineTime >= entry.clip.timelineStart
                     && timelineTime < entry.clip.timelineEnd())
@@ -190,22 +169,23 @@ namespace weasel
             {
                 break;
             }
-            if (!compositor.render(layers, width, height, 1.0, width, height,
+            if (!compositor.render(layers, prepared.width, prepared.height, 1.0,
+                                   prepared.width, prepared.height,
                                    result.rendererError)
                 || !compositor.copyToImage(renderedFrame, result.rendererError))
             {
                 failed = true;
                 break;
             }
-            if (!encoder.writeRgbaFrame(renderedFrame.getPixelsPtr(), width * 4,
+            if (!encoder.writeRgbaFrame(renderedFrame.getPixelsPtr(), prepared.width * 4,
                                         frameIndex, result.rendererError))
             {
                 failed = !request.cancelRequested.load(std::memory_order_acquire);
                 break;
             }
 
-            result.renderedDuration = std::min(duration,
-                static_cast<double>(frameIndex + 1) / frameRate);
+            result.renderedDuration = std::min(prepared.duration,
+                static_cast<double>(frameIndex + 1) / prepared.frameRate);
             if (callbacks.onProgress)
             {
                 callbacks.onProgress(result.renderedDuration);
@@ -226,11 +206,10 @@ namespace weasel
         if (request.cancelRequested.load(std::memory_order_acquire))
         {
             encoder.abort();
-            result.ffmpeg.started = true;
             result.ffmpeg.cancelled = true;
             return result;
         }
-        result.ffmpeg = encoder.finish(std::max(1.0 / frameRate,
+        result.ffmpeg = encoder.finish(std::max(1.0 / prepared.frameRate,
                                                 result.renderedDuration));
         return result;
     }

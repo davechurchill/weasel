@@ -1,13 +1,8 @@
 #include "media/AudioWaveformCache.h"
 
 #include "media/FfmpegBackend.h"
-
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#endif
+#include "util/FileUtils.h"
+#include "util/PathUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -35,13 +30,6 @@ namespace
     constexpr std::array<char, 8> WaveformCacheMagic = { 'V', 'I', 'D', 'W', 'A', 'V', 'E', '1' };
     constexpr std::uint32_t WaveformCacheVersion = 2;
     constexpr double WaveformCacheDurationTolerance = 0.01;
-
-    std::filesystem::path NormalizedPath(const std::filesystem::path& path)
-    {
-        std::error_code error;
-        const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-        return error ? path.lexically_normal() : absolute.lexically_normal();
-    }
 
     std::size_t DefaultPeakCountForDuration(double durationSeconds)
     {
@@ -311,32 +299,18 @@ namespace
             stream.flush();
             if (!stream)
             {
-                std::error_code removeError;
-                std::filesystem::remove(temporaryPath, removeError);
+                weasel::RemoveFileQuietly(temporaryPath);
                 return false;
             }
         }
 
-#if defined(_WIN32)
-        if (!MoveFileExW(temporaryPath.c_str(), cachePath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        std::string publishError;
+        if (!weasel::PublishStagingFile(
+                temporaryPath, cachePath, "the waveform cache", publishError))
         {
-            std::error_code removeError;
-            std::filesystem::remove(temporaryPath, removeError);
+            weasel::RemoveFileQuietly(temporaryPath);
             return false;
         }
-#else
-        // The staging file lives beside the destination, so POSIX rename()
-        // replaces the old cache atomically instead of exposing a partial
-        // waveform to another editor instance.
-        std::error_code renameError;
-        std::filesystem::rename(temporaryPath, cachePath, renameError);
-        if (renameError)
-        {
-            std::error_code removeError;
-            std::filesystem::remove(temporaryPath, removeError);
-            return false;
-        }
-#endif
         return true;
     }
 
@@ -408,29 +382,21 @@ namespace weasel
             return false;
         }
 
-        const std::filesystem::path normalizedMediaPath = NormalizedPath(mediaPath);
+        const std::filesystem::path normalizedMediaPath = NormalizedAbsolutePath(mediaPath);
         const std::filesystem::path normalizedCacheDirectory = cacheDirectory.empty()
             ? std::filesystem::path{}
-            : NormalizedPath(cacheDirectory);
+            : NormalizedAbsolutePath(cacheDirectory);
         const std::size_t peakCount = DefaultPeakCountForDuration(durationSeconds);
         const std::vector<std::size_t> requestedTiles = RequestedTileIndices(
             sourceRanges, durationSeconds);
         const std::uint64_t cacheKey = WaveformCacheKey(
             normalizedMediaPath, durationSeconds, peakCount);
 
-        std::string immediateError;
-        if (normalizedMediaPath.empty() || !std::filesystem::exists(normalizedMediaPath))
-        {
-            immediateError = "Media file was not found: " + normalizedMediaPath.string();
-        }
-        else if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
-        {
-            immediateError = "The media duration must be greater than zero to generate a waveform.";
-        }
-        else if (requestedTiles.empty())
-        {
-            immediateError = "No source-audio range was requested for this waveform.";
-        }
+        const bool validRequest = !normalizedMediaPath.empty()
+            && std::filesystem::exists(normalizedMediaPath)
+            && std::isfinite(durationSeconds)
+            && durationSeconds > 0.0
+            && !requestedTiles.empty();
 
         bool accepted = true;
         {
@@ -464,7 +430,7 @@ namespace weasel
                 return entry->status.state != AudioWaveformState::Failed;
             }
 
-            if (!immediateError.empty())
+            if (!validRequest)
             {
                 if (entry->cancellation)
                 {
@@ -473,10 +439,8 @@ namespace weasel
                 entry->waveform.reset();
                 entry->status = {
                     AudioWaveformState::Failed,
-                    "Waveform unavailable.",
-                    immediateError,
                     m_nextGeneration++,
-                    0
+                    0.0f
                 };
                 entry->mediaPath = normalizedMediaPath;
                 entry->cacheDirectory = normalizedCacheDirectory;
@@ -510,10 +474,8 @@ namespace weasel
                 entry->cancellation = cancellation;
                 entry->status = {
                     AudioWaveformState::Queued,
-                    "Waveform queued.",
-                    {},
                     generation,
-                    0
+                    0.0f
                 };
                 auto work = std::make_shared<Request>();
                 work->assetId = assetId;
@@ -591,7 +553,7 @@ namespace weasel
         entry.status.progress = std::clamp(progress, 0.0f, 1.0f);
     }
 
-    void AudioWaveformCache::publishFailure(const Request& request, std::string message, std::string error)
+    void AudioWaveformCache::publishFailure(const Request& request)
     {
         std::lock_guard lock(m_mutex);
         const auto found = m_entries.find(request.assetId);
@@ -608,10 +570,8 @@ namespace weasel
         entry.waveform.reset();
         entry.status = {
             AudioWaveformState::Failed,
-            std::move(message),
-            std::move(error),
             request.generation,
-            0
+            0.0f
         };
     }
 
@@ -633,12 +593,9 @@ namespace weasel
         entry.waveform = std::move(waveform);
         entry.status = {
             AudioWaveformState::Ready,
-            "Waveform ready.",
-            {},
             request.generation,
-            entry.waveform ? entry.waveform->peaks.size() : 0
+            1.0f
         };
-        entry.status.progress = 1.0f;
     }
 
     void AudioWaveformCache::workerMain()
@@ -669,10 +626,8 @@ namespace weasel
                 }
                 found->second->status = {
                     AudioWaveformState::Generating,
-                    "Generating waveform...",
-                    {},
                     request->generation,
-                    0
+                    0.0f
                 };
                 found->second->status.generationStartedAt = std::chrono::steady_clock::now();
             }
@@ -696,8 +651,7 @@ namespace weasel
 
                 if (tiles.empty())
                 {
-                    publishFailure(*request, "Waveform generation failed.",
-                                   "No valid source-audio tiles were requested.");
+                    publishFailure(*request);
                     continue;
                 }
 
@@ -802,8 +756,7 @@ namespace weasel
                     }
                     if (!decoded)
                     {
-                        publishFailure(*request, "Waveform generation did not complete.",
-                                       decodeError);
+                        publishFailure(*request);
                         failed = true;
                         break;
                     }
@@ -846,7 +799,7 @@ namespace weasel
                 }
                 if (!hasReadableAudio)
                 {
-                    publishFailure(*request, "This media does not contain readable audio.", {});
+                    publishFailure(*request);
                     continue;
                 }
 
@@ -870,13 +823,13 @@ namespace weasel
                 BuildPeakLevels(*waveform);
                 publishReady(*request, waveform);
             }
-            catch (const std::exception& exception)
+            catch (const std::exception&)
             {
-                publishFailure(*request, "Waveform generation failed.", exception.what());
+                publishFailure(*request);
             }
             catch (...)
             {
-                publishFailure(*request, "Waveform generation failed.", "An unknown error occurred while processing audio samples.");
+                publishFailure(*request);
             }
         }
     }

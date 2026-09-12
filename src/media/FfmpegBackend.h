@@ -34,7 +34,6 @@ namespace weasel
 
     struct FfmpegOperationResult
     {
-        bool        started = false;
         bool        succeeded = false;
         bool        cancelled = false;
         std::string encoderName;
@@ -63,49 +62,11 @@ namespace weasel
                                    const std::filesystem::path& outputPath,
                                    std::atomic_bool& cancelRequested,
                                    const std::function<void(double)>& onProgress,
-                                   const FfmpegLogCallback& onLog,
                                    std::string& error);
 
-    struct FfmpegVideoLayerFrame
-    {
-        const std::uint8_t* pixels = nullptr;
-        int                 width = 0;
-        int                 height = 0;
-        int                 strideBytes = 0;
-        bool                active = false;
-    };
-
-    // A persistent libavfilter graph for the CPU/FFmpeg render path. Each
-    // call supplies one timeline frame for every configured visual layer;
-    // grading, transforms, LUTs, blur, alpha, and overlay all remain inside
-    // the graph between its buffer sources and RGBA buffer sink.
-    class FfmpegFrameCompositor
-    {
-    private:
-        class Impl;
-        std::unique_ptr<Impl> m_impl;
-
-    public:
-        FfmpegFrameCompositor();
-        ~FfmpegFrameCompositor();
-
-        FfmpegFrameCompositor(const FfmpegFrameCompositor&) = delete;
-        FfmpegFrameCompositor& operator=(const FfmpegFrameCompositor&) = delete;
-
-        bool open(const std::vector<SequenceRenderEntry>& visualEntries,
-                  int outputWidth,
-                  int outputHeight,
-                  double frameRate,
-                  std::string& error);
-        bool render(const std::vector<FfmpegVideoLayerFrame>& layers,
-                    std::int64_t frameIndex,
-                    std::vector<std::uint8_t>& outputRgba,
-                    std::string& error);
-    };
-
     // A pull-driven libavfilter graph fed by persistent libavformat/libavcodec
-    // inputs. Unlike FfmpegFrameCompositor, this path decodes every source
-    // frame once and lets FFmpeg schedule the timeline filters continuously.
+    // inputs. It decodes every source frame once and lets FFmpeg schedule the
+    // timeline filters continuously.
     class FfmpegStreamingVideoSource
     {
     private:
@@ -127,9 +88,6 @@ namespace weasel
                   std::string& error,
                   int outputPixelFormat = -1,
                   std::atomic_bool* cancelRequested = nullptr);
-        bool readFrame(std::vector<std::uint8_t>& outputRgba,
-                       bool& reachedEnd,
-                       std::string& error);
         bool readNativeFrame(const void*& nativeFrame,
                              bool& reachedEnd,
                              std::string& error);
@@ -173,6 +131,5 @@ namespace weasel
         FfmpegOperationResult finish(double renderedDurationSeconds);
         void abort() noexcept;
         int videoPixelFormat() const noexcept;
-        const std::string& encoderName() const noexcept;
     };
 }

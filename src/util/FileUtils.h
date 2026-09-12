@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -9,9 +10,9 @@ namespace weasel
 {
     // Creates a staging filename beside the final output, preserving the
     // original extension. `operation` makes concurrent job types legible.
-    std::filesystem::path MediaStagingPath(const std::filesystem::path& outputPath,
-                                           std::string_view operation,
-                                           std::uint64_t generation);
+    std::filesystem::path StagingFilePath(const std::filesystem::path& outputPath,
+                                          std::string_view operation,
+                                          std::uint64_t generation);
 
     // Atomically replaces the final output with a completed staging file when
     // the platform supports it. The staging path must be beside the output.

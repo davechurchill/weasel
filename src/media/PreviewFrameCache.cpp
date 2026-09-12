@@ -1,4 +1,5 @@
 #include "media/PreviewFrameCache.h"
+#include "util/PathUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,12 +15,6 @@ namespace
     constexpr std::size_t MaximumQueuedFrameRequests = 64;
     constexpr std::int64_t StalePrefetchDistanceMicroseconds = 1000000;
 
-    std::filesystem::path NormalizedPath(const std::filesystem::path& path)
-    {
-        std::error_code error;
-        const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-        return error ? path.lexically_normal() : absolute.lexically_normal();
-    }
 }
 
 namespace weasel
@@ -60,7 +55,7 @@ namespace weasel
         const double microseconds = std::min(clampedTime * 1000000.0,
             static_cast<double>(std::numeric_limits<std::int64_t>::max()));
         return {
-            NormalizedPath(mediaPath),
+            NormalizedAbsolutePath(mediaPath),
             static_cast<std::int64_t>(std::llround(microseconds)),
             std::max(1, maximumPreviewEdge),
             streamId

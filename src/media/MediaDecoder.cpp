@@ -1,7 +1,7 @@
 #include "media/MediaDecoder.h"
+#include "media/FfmpegInternal.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -13,101 +13,20 @@ extern "C"
 {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavutil/display.h>
-#include <libavutil/error.h>
 #include <libswscale/swscale.h>
 }
 
 namespace
 {
-    std::string Utf8Path(const std::filesystem::path& path)
-    {
-#if defined(_WIN32)
-        const std::u8string value = path.u8string();
-        return { reinterpret_cast<const char*>(value.data()), value.size() };
-#else
-        return path.string();
-#endif
-    }
-
-    std::string AvError(int code)
-    {
-        std::array<char, AV_ERROR_MAX_STRING_SIZE> text{};
-        av_strerror(code, text.data(), text.size());
-        return text.data();
-    }
-
-    int InterruptRead(void* opaque)
-    {
-        const auto* cancelled = static_cast<const std::atomic_bool*>(opaque);
-        return cancelled && cancelled->load(std::memory_order_acquire) ? 1 : 0;
-    }
-
-    struct FormatDeleter
-    {
-        void operator()(AVFormatContext* context) const noexcept
-        {
-            avformat_close_input(&context);
-        }
-    };
-
-    struct CodecDeleter
-    {
-        void operator()(AVCodecContext* context) const noexcept
-        {
-            avcodec_free_context(&context);
-        }
-    };
-
-    struct FrameDeleter
-    {
-        void operator()(AVFrame* frame) const noexcept
-        {
-            av_frame_free(&frame);
-        }
-    };
-
-    struct PacketDeleter
-    {
-        void operator()(AVPacket* packet) const noexcept
-        {
-            av_packet_free(&packet);
-        }
-    };
-
-    using FormatPtr = std::unique_ptr<AVFormatContext, FormatDeleter>;
-    using CodecPtr = std::unique_ptr<AVCodecContext, CodecDeleter>;
-    using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
-    using PacketPtr = std::unique_ptr<AVPacket, PacketDeleter>;
-
-    int NormalizeDegrees(int value)
-    {
-        value %= 360;
-        if (value < 0)
-        {
-            value += 360;
-        }
-        return value;
-    }
-
-    int StreamRotationDegrees(const AVStream* stream)
-    {
-        const AVPacketSideData* sideData = av_packet_side_data_get(
-            stream->codecpar->coded_side_data,
-            stream->codecpar->nb_coded_side_data,
-            AV_PKT_DATA_DISPLAYMATRIX);
-        if (!sideData || sideData->size < 9 * sizeof(std::int32_t))
-        {
-            return 0;
-        }
-        const auto* matrix = reinterpret_cast<const std::int32_t*>(sideData->data);
-        const double counterClockwise = av_display_rotation_get(matrix);
-        if (!std::isfinite(counterClockwise))
-        {
-            return 0;
-        }
-        return NormalizeDegrees(static_cast<int>(std::llround(-counterClockwise / 90.0)) * 90);
-    }
+    using weasel::FfmpegInternal::AvError;
+    using weasel::FfmpegInternal::CodecPtr;
+    using weasel::FfmpegInternal::FramePtr;
+    using FormatPtr = weasel::FfmpegInternal::InputFormatPtr;
+    using weasel::FfmpegInternal::InterruptRead;
+    using weasel::FfmpegInternal::NormalizeDegrees;
+    using weasel::FfmpegInternal::PacketPtr;
+    using weasel::FfmpegInternal::StreamRotationDegrees;
+    using weasel::FfmpegInternal::Utf8Path;
 
     void RotateRgba(const std::vector<std::uint8_t>& source,
                     int sourceWidth,

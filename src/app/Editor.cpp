@@ -1,8 +1,9 @@
 #include "app/Editor.h"
 
 #include "media/MediaProbe.h"
-#include "media/MediaTools.h"
 #include "timeline/WaveformAlignment.h"
+#include "ui/UiUtils.h"
+#include "util/TextUtils.h"
 #include <SFML/Graphics/Image.hpp>
 #include <SFML/OpenGL.hpp>
 #include <imgui.h>
@@ -19,12 +20,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <cwchar>
 #include <filesystem>
 #include <optional>
@@ -95,34 +94,14 @@ namespace
         return applicationDirectory / "exports";
     }
 
-    std::string Lowercase(std::string value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-        {
-            return static_cast<char>(std::tolower(character));
-        });
-        return value;
-    }
-
-    std::string Trim(std::string value)
-    {
-        const auto isNotWhitespace = [](unsigned char character)
-        {
-            return !std::isspace(character);
-        };
-        value.erase(value.begin(), std::find_if(value.begin(), value.end(), isNotWhitespace));
-        value.erase(std::find_if(value.rbegin(), value.rend(), isNotWhitespace).base(), value.end());
-        return value;
-    }
-
     std::optional<std::string> SafeFilenameStem(const char* input, std::string_view extension, std::string& error)
     {
-        std::string stem = Trim(input ? input : "");
-        const std::string lower = Lowercase(stem);
+        std::string stem = weasel::TrimWhitespace(input ? input : "");
+        const std::string lower = weasel::LowercaseAscii(stem);
         if (lower.ends_with(extension))
         {
             stem.resize(stem.size() - extension.size());
-            stem = Trim(stem);
+            stem = weasel::TrimWhitespace(stem);
         }
 
         static constexpr std::string_view InvalidCharacters = "<>:\"/\\|?*";
@@ -138,18 +117,6 @@ namespace
 
         error.clear();
         return stem;
-    }
-
-    std::string TimeText(double seconds)
-    {
-        seconds = std::max(0.0, seconds);
-        const int wholeSeconds = static_cast<int>(seconds);
-        const int minutes = wholeSeconds / 60;
-        const int remainingSeconds = wholeSeconds % 60;
-        const int centiseconds = static_cast<int>(std::floor((seconds - wholeSeconds) * 100.0 + 0.5));
-        char buffer[32]{};
-        std::snprintf(buffer, sizeof(buffer), "%02d:%02d.%02d", minutes, remainingSeconds, centiseconds % 100);
-        return buffer;
     }
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -439,7 +406,7 @@ namespace
         // This editor currently exports MP4 containers. The dialog's default
         // extension covers ordinary saves; normalize an explicitly typed
         // alternative extension as well.
-        if (Lowercase(destination.extension().string()) != ".mp4")
+        if (weasel::LowercaseAscii(destination.extension().string()) != ".mp4")
         {
             destination.replace_extension(".mp4");
         }
@@ -462,7 +429,7 @@ namespace
             return std::nullopt;
         }
         std::filesystem::path destination(chosenPath);
-        if (Lowercase(destination.extension().string()) != ".mp4")
+        if (weasel::LowercaseAscii(destination.extension().string()) != ".mp4")
         {
             destination.replace_extension(".mp4");
         }
@@ -470,33 +437,9 @@ namespace
 #endif
     }
 
-    void CopyToBuffer(std::array<char, 128>& buffer, const std::string& value)
-    {
-        std::fill(buffer.begin(), buffer.end(), '\0');
-        const std::size_t length = std::min(value.size(), buffer.size() - 1);
-        std::copy_n(value.begin(), static_cast<std::ptrdiff_t>(length), buffer.begin());
-    }
-
-    ImGuiWindowFlags FixedPanelFlags()
-    {
-        return ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
-            | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    }
-
-    ImTextureID ImGuiTextureId(GLuint textureHandle)
-    {
-        // ImGui 1.91 uses a pointer-shaped ImTextureID by default while 1.92
-        // uses an integer one. Copy the OpenGL handle just as ImGui-SFML does
-        // so the editor works with either representation.
-        static_assert(sizeof(GLuint) <= sizeof(ImTextureID));
-        ImTextureID textureId{};
-        std::memcpy(&textureId, &textureHandle, sizeof(textureHandle));
-        return textureId;
-    }
-
     void DrawOpenGLTexture(GLuint textureHandle, const ImVec2& size)
     {
-        const ImTextureID textureId = ImGuiTextureId(textureHandle);
+        const ImTextureID textureId = weasel::ImGuiTextureId(textureHandle);
 #if IMGUI_VERSION_NUM >= 19200
         ImGui::Image(ImTextureRef(textureId), size);
 #else
@@ -509,7 +452,7 @@ namespace
                            const ImVec2& minimum,
                            const ImVec2& maximum)
     {
-        const ImTextureID textureId = ImGuiTextureId(textureHandle);
+        const ImTextureID textureId = weasel::ImGuiTextureId(textureHandle);
 #if IMGUI_VERSION_NUM >= 19200
         drawList.AddImage(ImTextureRef(textureId), minimum, maximum);
 #else
@@ -592,8 +535,8 @@ namespace weasel
         std::filesystem::create_directories(m_dataDirectory / "presets", error);
         std::string recentProjectsError;
         (void)m_recentProjects.load(recentProjectsError);
-        CopyToBuffer(m_projectNameInput, "Untitled");
-        CopyToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
+        CopyTextToBuffer(m_projectNameInput, "Untitled");
+        CopyTextToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
         updateWindowTitle();
         loadClipPresets();
         setupNativeFileDrop();
@@ -1238,8 +1181,8 @@ namespace weasel
         updateSequenceAudioCacheDirectory();
         m_mediaThumbnailController.reset();
         m_uiState.resetForProjectChange();
-        CopyToBuffer(m_projectNameInput, "Untitled");
-        CopyToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
+        CopyTextToBuffer(m_projectNameInput, "Untitled");
+        CopyTextToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
         clearWaveformAlignment();
         m_openProjectTab = true;
         m_openMediaTab = false;
@@ -1393,7 +1336,7 @@ namespace weasel
     {
         ImGui::SetNextWindowPos(position, ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-        ImGui::Begin("PROJECT", nullptr, FixedPanelFlags() | ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("PROJECT", nullptr, FixedPanelWindowFlags() | ImGuiWindowFlags_NoTitleBar);
 
         if (ImGui::BeginTabBar("ProjectTabs"))
         {
@@ -1583,7 +1526,7 @@ namespace weasel
                                     ImGui::TableSetColumnIndex(1);
                                     ImGui::TextDisabled("%s", mediaDescription(asset).c_str());
                                     ImGui::TableSetColumnIndex(2);
-                                    ImGui::TextDisabled("%s", TimeText(asset.duration).c_str());
+                                    ImGui::TextDisabled("%s", FormatTimelineTime(asset.duration).c_str());
                                     if (!fileAvailable)
                                     {
                                         ImGui::PopStyleColor(2);
@@ -1714,7 +1657,8 @@ namespace weasel
                                             cardMaximum.y - cardPadding);
                                         drawList->PushClipRect(titlePosition, textMaximum, true);
                                         drawList->AddText(titlePosition, textColor, asset.name.c_str());
-                                        const std::string details = mediaDescription(asset) + "  " + TimeText(asset.duration);
+                                        const std::string details = mediaDescription(asset) + "  "
+                                            + FormatTimelineTime(asset.duration);
                                         drawList->AddText(ImVec2(titlePosition.x,
                                                                   titlePosition.y + ImGui::GetTextLineHeight()),
                                                           fileAvailable ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : textColor,
@@ -1994,7 +1938,7 @@ namespace weasel
     {
         ImGui::SetNextWindowPos(position, ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-        ImGui::Begin("VIDEO PREVIEW", nullptr, FixedPanelFlags() | ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("VIDEO PREVIEW", nullptr, FixedPanelWindowFlags() | ImGuiWindowFlags_NoTitleBar);
 
         // This is a sequence monitor: it always shows the composited sequence
         // canvas, including its black background and video-track compositing order.
@@ -2091,7 +2035,8 @@ namespace weasel
             m_playing = false;
             requestScrubAudio();
         }
-        const std::string playheadText = TimeText(m_project.sequence().playhead) + " / " + TimeText(m_project.duration());
+        const std::string playheadText = FormatTimelineTime(m_project.sequence().playhead)
+            + " / " + FormatTimelineTime(m_project.duration());
         const ImVec2 playheadTextSize = ImGui::CalcTextSize(playheadText.c_str());
         const ImVec2 playheadMinimum = ImGui::GetItemRectMin();
         const ImVec2 playheadMaximum = ImGui::GetItemRectMax();
@@ -2110,7 +2055,7 @@ namespace weasel
     {
         ImGui::SetNextWindowPos(position, ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-        ImGui::Begin("INSPECTOR", nullptr, FixedPanelFlags() | ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("INSPECTOR", nullptr, FixedPanelWindowFlags() | ImGuiWindowFlags_NoTitleBar);
 
         if (ImGui::BeginTabBar("InspectorTabs"))
         {
@@ -2220,7 +2165,7 @@ namespace weasel
             return std::nullopt;
         }
 
-        if (Lowercase(selectedPath->extension().string()) != ".cube")
+        if (LowercaseAscii(selectedPath->extension().string()) != ".cube")
         {
             return std::nullopt;
         }
@@ -2439,8 +2384,8 @@ namespace weasel
         m_mediaThumbnailController.reset();
         m_uiState.resetForProjectChange();
         m_sequenceAudioController.reset();
-        CopyToBuffer(m_projectNameInput, m_editorState.projectDirectory().filename().string());
-        CopyToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
+        CopyTextToBuffer(m_projectNameInput, m_editorState.projectDirectory().filename().string());
+        CopyTextToBuffer(m_exportNameInput, m_project.exportSettings().outputFileName);
         clearWaveformAlignment();
         m_openProjectTab = true;
         m_openMediaTab = false;
@@ -2526,7 +2471,7 @@ namespace weasel
             return false;
         }
         updateSequenceAudioCacheDirectory();
-        CopyToBuffer(m_projectNameInput, *selectedName);
+        CopyTextToBuffer(m_projectNameInput, *selectedName);
         rememberCurrentProject();
         return true;
     }
@@ -2606,11 +2551,11 @@ namespace weasel
         std::string error;
         if (!output.empty())
         {
-            if (Lowercase(output.extension().string()) != ".mp4")
+            if (LowercaseAscii(output.extension().string()) != ".mp4")
             {
                 output.replace_extension(".mp4");
             }
-            CopyToBuffer(m_exportNameInput, output.filename().string());
+            CopyTextToBuffer(m_exportNameInput, output.filename().string());
         }
         // Export uses the live project immediately, so first finish any
         // coalesced inspector or timeline edit as its own history action.

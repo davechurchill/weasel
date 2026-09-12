@@ -1,10 +1,9 @@
 #include "render/SequenceAudioRenderer.h"
 
 #include "media/FfmpegBackend.h"
-#include "media/MediaTools.h"
+#include "util/FileUtils.h"
 
 #include <algorithm>
-#include <chrono>
 #include <exception>
 #include <system_error>
 
@@ -65,7 +64,6 @@ namespace weasel
         SequenceRenderEntry prepared = audioEntry;
         prepared.clip.speed = TimelineClip::normalizedSpeed(prepared.clip.speed);
         prepared.clip.audio.normalize();
-        const double renderDuration = std::max(0.05, prepared.clip.duration());
         const std::filesystem::path outputDirectory = outputWavPath.parent_path();
         if (!outputDirectory.empty())
         {
@@ -85,8 +83,7 @@ namespace weasel
             generation = m_nextGeneration++;
             m_status = {
                 SequenceAudioRenderState::Rendering, outputWavPath,
-                "Preparing clip audio...", {}, generation, 0.0, 0.0,
-                renderDuration, -1.0
+                "Preparing clip audio...", generation, 0.0
             };
         }
         try
@@ -101,8 +98,8 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             m_status = {
                 SequenceAudioRenderState::Failed, outputWavPath,
-                "Could not start the clip-audio renderer.", exception.what(),
-                generation, 0.0, 0.0, renderDuration, -1.0
+                "Could not start the clip-audio renderer: " + std::string(exception.what()),
+                generation, 0.0
             };
             error = m_status.message;
             return false;
@@ -136,13 +133,10 @@ namespace weasel
                                              std::uint64_t generation)
     {
         const double duration = std::max(0.05, audioEntry.clip.duration());
-        const std::filesystem::path stagingPath = MediaStagingPath(
+        const std::filesystem::path stagingPath = StagingFilePath(
             outputWavPath, "render", generation);
         RemoveFileQuietly(stagingPath);
-        const auto startedAt = std::chrono::steady_clock::now();
-        std::string liveLog;
-
-        const auto onProgress = [this, generation, duration, startedAt](double seconds)
+        const auto onProgress = [this, generation, duration](double seconds)
         {
             std::lock_guard lock(m_mutex);
             if (m_status.state != SequenceAudioRenderState::Rendering
@@ -151,30 +145,7 @@ namespace weasel
                 return;
             }
             const double processed = std::clamp(seconds, 0.0, duration);
-            m_status.processedSeconds = std::max(m_status.processedSeconds, processed);
             m_status.progress = std::max(m_status.progress, processed / duration);
-            const double elapsed = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - startedAt).count();
-            if (elapsed >= 0.25 && m_status.processedSeconds >= 0.05)
-            {
-                const double rate = m_status.processedSeconds / elapsed;
-                m_status.estimatedRemainingSeconds = rate > 0.0
-                    ? std::max(0.0, (duration - m_status.processedSeconds) / rate) : -1.0;
-            }
-        };
-        const auto onLog = [this, generation, &liveLog](std::string_view chunk)
-        {
-            liveLog.append(chunk.data(), chunk.size());
-            if (liveLog.size() > 48 * 1024)
-            {
-                liveLog.erase(0, liveLog.size() - 48 * 1024);
-            }
-            std::lock_guard lock(m_mutex);
-            if (m_status.state == SequenceAudioRenderState::Rendering
-                && m_status.generation == generation)
-            {
-                m_status.log = liveLog;
-            }
         };
 
         {
@@ -186,7 +157,7 @@ namespace weasel
         }
         std::string renderError;
         const bool rendered = RenderClipAudioWithFfmpeg(
-            audioEntry, stagingPath, m_cancelRequested, onProgress, onLog, renderError);
+            audioEntry, stagingPath, m_cancelRequested, onProgress, renderError);
         if (!rendered || m_cancelRequested.load(std::memory_order_acquire))
         {
             RemoveFileQuietly(stagingPath);
@@ -195,10 +166,9 @@ namespace weasel
             m_status = {
                 cancelled ? SequenceAudioRenderState::Cancelled : SequenceAudioRenderState::Failed,
                 outputWavPath,
-                cancelled ? "Clip audio render cancelled." : "Clip audio render did not complete.",
-                cancelled ? liveLog : renderError + (liveLog.empty() ? "" : "\n" + liveLog),
-                generation, m_status.progress, m_status.processedSeconds, duration,
-                m_status.estimatedRemainingSeconds
+                cancelled ? "Clip audio render cancelled."
+                          : (renderError.empty() ? "Clip audio render did not complete." : renderError),
+                generation, m_status.progress
             };
             return;
         }
@@ -210,9 +180,8 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             m_status = {
                 SequenceAudioRenderState::Failed, outputWavPath,
-                "Clip audio was rendered but could not be published.", commitError,
-                generation, m_status.progress, m_status.processedSeconds, duration,
-                m_status.estimatedRemainingSeconds
+                "Clip audio was rendered but could not be published: " + commitError,
+                generation, m_status.progress
             };
             return;
         }
@@ -222,16 +191,14 @@ namespace weasel
             std::lock_guard lock(m_mutex);
             m_status = {
                 SequenceAudioRenderState::Cancelled, outputWavPath,
-                "Clip audio render cancelled.", liveLog, generation,
-                m_status.progress, m_status.processedSeconds, duration,
-                m_status.estimatedRemainingSeconds
+                "Clip audio render cancelled.", generation, m_status.progress
             };
             return;
         }
         std::lock_guard lock(m_mutex);
         m_status = {
             SequenceAudioRenderState::Succeeded, outputWavPath,
-            "Clip audio ready.", liveLog, generation, 1.0, duration, duration, 0.0
+            "Clip audio ready.", generation, 1.0
         };
     }
 }

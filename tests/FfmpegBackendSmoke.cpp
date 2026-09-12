@@ -11,6 +11,12 @@
 #include <string>
 #include <vector>
 
+extern "C"
+{
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>
+}
+
 namespace
 {
     template <typename Value>
@@ -77,6 +83,14 @@ namespace
         std::cerr << step << ": " << error << '\n';
         return 1;
     }
+
+    const AVFrame* RgbaFrame(const void* nativeFrame, int width, int height)
+    {
+        const auto* frame = static_cast<const AVFrame*>(nativeFrame);
+        return frame && frame->format == AV_PIX_FMT_RGBA
+            && frame->width == width && frame->height == height && frame->data[0]
+            ? frame : nullptr;
+    }
 }
 
 int main()
@@ -133,12 +147,12 @@ int main()
     {
         return Fail("still-image streaming graph", error);
     }
-    std::vector<std::uint8_t> stillRgba;
     for (int index = 0; index < 3; ++index)
     {
         bool reachedEnd = false;
-        if (!stillSource.readFrame(stillRgba, reachedEnd, error) || reachedEnd
-            || stillRgba.size() != 64 * 64 * 4)
+        const void* nativeFrame = nullptr;
+        if (!stillSource.readNativeFrame(nativeFrame, reachedEnd, error) || reachedEnd
+            || !RgbaFrame(nativeFrame, 64, 64))
         {
             return Fail("still-image streaming frame", error.empty()
                 ? "unexpected end of stream" : error);
@@ -153,9 +167,10 @@ int main()
         return Fail("cropped alpha graph", error);
     }
     bool croppedReachedEnd = false;
-    if (!croppedStillSource.readFrame(stillRgba, croppedReachedEnd, error)
-        || croppedReachedEnd || stillRgba.size() != 4 * 3 * 4
-        || stillRgba[1] < 100)
+    const void* croppedNativeFrame = nullptr;
+    if (!croppedStillSource.readNativeFrame(croppedNativeFrame, croppedReachedEnd, error)
+        || croppedReachedEnd || !RgbaFrame(croppedNativeFrame, 4, 3)
+        || static_cast<const AVFrame*>(croppedNativeFrame)->data[0][1] < 100)
     {
         return Fail("cropped alpha frame", error.empty()
             ? "the crop obscured the lower layer" : error);
@@ -178,34 +193,9 @@ int main()
     entry.clip.sourceOut = 0.5;
     entry.clip.timelineStart = 0.0;
     if (!weasel::RenderClipAudioWithFfmpeg(entry, clipOutput, cancelled,
-                                           {}, {}, error))
+                                           {}, error))
     {
         return Fail("clip WAV", error);
-    }
-
-    weasel::SequenceRenderEntry visualEntry;
-    visualEntry.includeVideo = true;
-    visualEntry.asset.width = 16;
-    visualEntry.asset.height = 16;
-    weasel::FfmpegFrameCompositor compositor;
-    if (!compositor.open({ visualEntry }, 64, 64, 10.0, error))
-    {
-        return Fail("compositor open", error);
-    }
-    std::vector<std::uint8_t> layerPixels(16 * 16 * 4, 0);
-    for (std::size_t pixel = 0; pixel < layerPixels.size(); pixel += 4)
-    {
-        layerPixels[pixel + 1] = 220;
-        layerPixels[pixel + 3] = 255;
-    }
-    const std::vector<weasel::FfmpegVideoLayerFrame> layers = { {
-        layerPixels.data(), 16, 16, 16 * 4, true
-    } };
-    std::vector<std::uint8_t> rgba;
-    if (!compositor.render(layers, 0, rgba, error) || rgba.size() != 64 * 64 * 4
-        || rgba[(32 * 64 + 32) * 4 + 1] < 150)
-    {
-        return Fail("compositor frame", error);
     }
 
     weasel::FfmpegTimelineEncoder encoder;
@@ -288,8 +278,9 @@ int main()
     for (int index = 0; index < 3; ++index)
     {
         bool reachedEnd = false;
-        if (!streamingSource.readFrame(rgba, reachedEnd, error) || reachedEnd
-            || rgba.size() != 64 * 64 * 4)
+        const void* nativeFrame = nullptr;
+        if (!streamingSource.readNativeFrame(nativeFrame, reachedEnd, error) || reachedEnd
+            || !RgbaFrame(nativeFrame, 64, 64))
         {
             return Fail("streaming graph frame", error.empty()
                 ? "unexpected end of stream" : error);

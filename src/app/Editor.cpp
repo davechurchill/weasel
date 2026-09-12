@@ -602,10 +602,7 @@ namespace weasel
 
     Editor::~Editor()
     {
-        m_sequenceAudioController.reset();
-        m_exportController.cancel();
-        closeEncodingWindow(false);
-        teardownNativeFileDrop();
+        shutdown();
         if (m_imguiInitialized)
         {
             ImGui::SFML::Shutdown();
@@ -617,6 +614,15 @@ namespace weasel
         while (m_running && m_window.isOpen())
         {
             update();
+        }
+
+        // Do not rely on the destructor for an alternate loop exit (for
+        // example, if the native window becomes closed without the usual SFML
+        // close event). Every return from run() crosses the same join barrier.
+        shutdown();
+        if (m_window.isOpen())
+        {
+            m_window.close();
         }
     }
 
@@ -673,16 +679,16 @@ namespace weasel
             updateSequenceAudio();
         }
         renderUI();
-        updateWindowTitle();
-        UploadPendingImGuiFontAtlasUpdates();
-        m_window.clear(CurrentThemeBackgroundColour());
-        ImGui::SFML::Render(m_window);
-        m_window.display();
         if (!m_running)
         {
             m_window.close();
             return;
         }
+        updateWindowTitle();
+        UploadPendingImGuiFontAtlasUpdates();
+        m_window.clear(CurrentThemeBackgroundColour());
+        ImGui::SFML::Render(m_window);
+        m_window.display();
         renderEncodingWindow(deltaTime);
     }
 
@@ -691,6 +697,10 @@ namespace weasel
         while (const std::optional event = m_window.pollEvent())
         {
             processEvent(*event);
+            if (!m_running)
+            {
+                break;
+            }
         }
     }
 
@@ -846,6 +856,10 @@ namespace weasel
     void Editor::renderUI()
     {
         renderMenu();
+        if (!m_running)
+        {
+            return;
+        }
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         const ImVec2 position = viewport->WorkPos;
@@ -1238,10 +1252,33 @@ namespace weasel
 
     void Editor::quitApplication()
     {
-        // A menu action or confirmation can request quit while ImGui is
-        // building a frame. update() closes the window after that frame is
-        // rendered so SFML is never asked to render a closed window.
+        // Keep the main window alive until every worker has joined. Closing it
+        // first makes a still-shutting-down process look like a hidden orphan.
+        shutdown();
+    }
+
+    void Editor::shutdown()
+    {
+        if (m_shutdown)
+        {
+            m_running = false;
+            return;
+        }
+        m_shutdown = true;
         m_running = false;
+        m_playing = false;
+
+        // Stop new native callbacks and signal all child-process owners before
+        // waiting on any one subsystem.
+        teardownNativeFileDrop();
+        m_exportController.cancel();
+        m_sequenceAudioController.reset();
+        m_previewController.reset();
+
+        m_sequenceAudioController.shutdown();
+        m_exportController.shutdown(m_window);
+        m_mediaThumbnailController.reset();
+        m_previewFrameCache.shutdown();
     }
 
     void Editor::updateWindowTitle()

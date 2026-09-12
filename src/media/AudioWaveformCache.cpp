@@ -487,6 +487,11 @@ namespace weasel
 
     AudioWaveformCache::~AudioWaveformCache()
     {
+        shutdown();
+    }
+
+    void AudioWaveformCache::shutdown()
+    {
         std::shared_ptr<std::atomic_bool> activeCancellation;
         {
             std::lock_guard lock(m_mutex);
@@ -554,6 +559,10 @@ namespace weasel
         bool accepted = true;
         {
             std::lock_guard lock(m_mutex);
+            if (m_stopping)
+            {
+                return false;
+            }
             std::shared_ptr<Entry>& entry = m_entries[assetId];
             if (!entry)
             {

@@ -395,8 +395,14 @@ namespace weasel
 
     VideoExporter::~VideoExporter()
     {
-        cancel();
+        shutdown();
+    }
+
+    void VideoExporter::shutdown()
+    {
         std::lock_guard lifecycleLock(m_lifecycleMutex);
+        m_shutdown = true;
+        cancel();
         if (m_worker.joinable())
         {
             m_worker.join();
@@ -409,6 +415,11 @@ namespace weasel
                               std::string& error)
     {
         std::lock_guard lifecycleLock(m_lifecycleMutex);
+        if (m_shutdown)
+        {
+            error = "The exporter has shut down.";
+            return false;
+        }
         if (isRunning())
         {
             error = "An export is already running.";

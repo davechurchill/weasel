@@ -53,6 +53,7 @@ namespace weasel
         SequenceAudioRenderStatus  m_status;
         std::thread                m_worker;
         std::atomic_bool           m_cancelRequested = false;
+        bool                       m_shutdown = false;
 
         // Stored as void* to keep platform process headers out of the
         // editor-facing API.  It is a Win32 HANDLE on Windows and a private
@@ -85,6 +86,9 @@ namespace weasel
         // running. The worker removes its staging file before reporting
         // Cancelled. It is safe to call this from the UI thread.
         void cancel();
+
+        // Cancels and synchronously joins the render worker. Terminal.
+        void shutdown();
 
         SequenceAudioRenderStatus status() const;
         bool isRunning() const;

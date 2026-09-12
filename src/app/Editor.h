@@ -137,6 +137,7 @@ namespace weasel
         sf::Clock               m_clock;
         bool                    m_imguiInitialized = false;
         bool                    m_running = true;
+        bool                    m_shutdown = false;
         std::string             m_windowTitle;
         std::filesystem::path   m_applicationDirectory;
         std::filesystem::path   m_dataDirectory;
@@ -232,6 +233,7 @@ namespace weasel
         void clearPendingProjectAction();
         void startNewProject();
         void quitApplication();
+        void shutdown();
         bool saveProject();
         bool saveProjectAsNamed();
         void updateSequenceAudioCacheDirectory();

@@ -67,6 +67,31 @@ namespace
         }
     };
 
+    bool CreateProcessTreeJob(ScopedHandle& job, std::string& error)
+    {
+        job.reset(CreateJobObjectW(nullptr, nullptr));
+        if (!job.get())
+        {
+            error = "Could not create a process-tree job (Windows error "
+                + std::to_string(GetLastError()) + ").";
+            return false;
+        }
+
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job.get(),
+                                     JobObjectExtendedLimitInformation,
+                                     &limits,
+                                     sizeof(limits)))
+        {
+            error = "Could not configure process-tree ownership (Windows error "
+                + std::to_string(GetLastError()) + ").";
+            job.reset();
+            return false;
+        }
+        return true;
+    }
+
     void DrainAvailablePipe(HANDLE readPipe,
                             std::string* capturedOutput,
                             const weasel::ProcessOutputCallback& onChunk)
@@ -265,14 +290,37 @@ namespace
         pid_t processId = -1;
     };
 
+    bool EstablishProcessGroup(pid_t processId, std::string& error)
+    {
+        for (;;)
+        {
+            if (setpgid(processId, processId) == 0)
+            {
+                return true;
+            }
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            // EACCES means the child won the race and already exec'd after
+            // placing itself in the group. ESRCH means it already exited.
+            if (errno == EACCES || errno == ESRCH)
+            {
+                return true;
+            }
+            error = "Could not create a child process group: " + PosixErrorMessage(errno);
+            return false;
+        }
+    }
+
     void SignalProcess(pid_t processId, int signal) noexcept
     {
         if (processId > 0)
         {
-            // ESRCH is expected if the child exits in the cancellation race.
-            // The PID cannot be reused while this parent still owns an
-            // unreaped child, so the runner can safely escalate this child.
-            static_cast<void>(kill(processId, signal));
+            // Every child is its process-group leader. Signalling the negative
+            // ID terminates helpers as well as the executable we launched.
+            // ESRCH is expected after the complete group has exited.
+            static_cast<void>(kill(-processId, signal));
         }
     }
 
@@ -404,6 +452,12 @@ namespace weasel
         }
 
 #if defined(_WIN32)
+        ScopedHandle processTreeJob(nullptr);
+        if (!CreateProcessTreeJob(processTreeJob, result.error))
+        {
+            return result;
+        }
+
         SECURITY_ATTRIBUTES security{};
         security.nLength = sizeof(security);
         security.bInheritHandle = TRUE;
@@ -451,7 +505,7 @@ namespace weasel
                                             nullptr,
                                             nullptr,
                                             TRUE,
-                                            CREATE_NO_WINDOW,
+                                            CREATE_NO_WINDOW | CREATE_SUSPENDED,
                                             nullptr,
                                             workingDirectory.empty() ? nullptr : workingDirectory.c_str(),
                                             &startup,
@@ -465,58 +519,106 @@ namespace weasel
             return result;
         }
 
-        result.started = true;
         ScopedHandle processHandle(process.hProcess);
         ScopedHandle threadHandle(process.hThread);
+        if (!AssignProcessToJobObject(processTreeJob.get(), processHandle.get()))
+        {
+            const DWORD assignmentError = GetLastError();
+            TerminateProcess(processHandle.get(), CancelledProcessExitCode);
+            WaitForSingleObject(processHandle.get(), INFINITE);
+            result.error = "Could not take ownership of the child process tree (Windows error "
+                + std::to_string(assignmentError) + ").";
+            return result;
+        }
+        if (ResumeThread(threadHandle.get()) == static_cast<DWORD>(-1))
+        {
+            const DWORD resumeError = GetLastError();
+            TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode);
+            WaitForSingleObject(processHandle.get(), INFINITE);
+            result.error = "Could not resume the child process (Windows error "
+                + std::to_string(resumeError) + ").";
+            return result;
+        }
+        result.started = true;
         {
             std::lock_guard lock(processMutex);
             if (cancelRequested.load(std::memory_order_acquire))
             {
-                TerminateProcess(processHandle.get(), CancelledProcessExitCode);
+                TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode);
             }
             else
             {
-                activeProcess = processHandle.get();
+                activeProcess = processTreeJob.get();
             }
         }
 
-        for (;;)
+        try
         {
-            DrainAvailablePipe(standardOutputRead.get(),
-                               captureStandardOutput ? &result.standardOutput : nullptr,
-                               onStandardOutput);
-            DrainAvailablePipe(standardErrorRead.get(),
-                               captureStandardError ? &result.standardError : nullptr,
-                               onStandardError);
-            const DWORD waitResult = WaitForSingleObject(processHandle.get(), 15);
-            if (waitResult == WAIT_OBJECT_0)
+            for (;;)
             {
-                break;
-            }
-            if (waitResult == WAIT_FAILED)
-            {
-                result.error = "Could not wait for the process (Windows error " + std::to_string(GetLastError()) + ").";
-                TerminateProcess(processHandle.get(), CancelledProcessExitCode);
-                WaitForSingleObject(processHandle.get(), INFINITE);
-                break;
-            }
-            if (cancelRequested.load(std::memory_order_acquire))
-            {
-                std::lock_guard lock(processMutex);
-                if (activeProcess == processHandle.get())
+                DrainAvailablePipe(standardOutputRead.get(),
+                                   captureStandardOutput ? &result.standardOutput : nullptr,
+                                   onStandardOutput);
+                DrainAvailablePipe(standardErrorRead.get(),
+                                   captureStandardError ? &result.standardError : nullptr,
+                                   onStandardError);
+                const DWORD waitResult = WaitForSingleObject(processHandle.get(), 15);
+                if (waitResult == WAIT_OBJECT_0)
                 {
-                    TerminateProcess(processHandle.get(), CancelledProcessExitCode);
+                    break;
+                }
+                if (waitResult == WAIT_FAILED)
+                {
+                    result.error = "Could not wait for the process (Windows error "
+                        + std::to_string(GetLastError()) + ").";
+                    TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode);
+                    WaitForSingleObject(processHandle.get(), INFINITE);
+                    break;
+                }
+                if (cancelRequested.load(std::memory_order_acquire))
+                {
+                    std::lock_guard lock(processMutex);
+                    if (activeProcess == processTreeJob.get())
+                    {
+                        TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode);
+                    }
                 }
             }
+        }
+        catch (...)
+        {
+            // Output callbacks are supplied by worker owners and may throw.
+            // Never unwind past a live child or leave its opaque job token in
+            // the owner where a later cancellation could target a reused
+            // Windows handle.
+            {
+                std::lock_guard lock(processMutex);
+                if (activeProcess == processTreeJob.get())
+                {
+                    activeProcess = nullptr;
+                }
+            }
+            static_cast<void>(TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode));
+            static_cast<void>(WaitForSingleObject(processHandle.get(), INFINITE));
+            throw;
         }
 
         {
             std::lock_guard lock(processMutex);
-            if (activeProcess == processHandle.get())
+            if (activeProcess == processTreeJob.get())
             {
                 activeProcess = nullptr;
             }
         }
+        DWORD exitCode = 0;
+        if (!GetExitCodeProcess(processHandle.get(), &exitCode))
+        {
+            result.error = "Could not read the process exit code.";
+        }
+
+        // A successfully exited launcher must not leave descendants holding
+        // inherited pipes or continuing work after its owner has returned.
+        static_cast<void>(TerminateJobObject(processTreeJob.get(), CancelledProcessExitCode));
         DrainClosedPipe(standardOutputRead.get(),
                         captureStandardOutput ? &result.standardOutput : nullptr,
                         onStandardOutput);
@@ -524,10 +626,8 @@ namespace weasel
                         captureStandardError ? &result.standardError : nullptr,
                         onStandardError);
 
-        DWORD exitCode = 0;
-        if (!GetExitCodeProcess(processHandle.get(), &exitCode))
+        if (!result.error.empty())
         {
-            result.error = "Could not read the process exit code.";
             return result;
         }
         result.exitCode = exitCode;
@@ -612,7 +712,8 @@ namespace weasel
             close(standardOutputReadFd);
             close(standardErrorReadFd);
             close(startupReadFd);
-            if (chdir(workingDirectory.c_str()) != 0
+            if (setpgid(0, 0) != 0
+                || chdir(workingDirectory.c_str()) != 0
                 || dup2(standardOutputWriteFd, STDOUT_FILENO) < 0
                 || dup2(standardErrorWriteFd, STDERR_FILENO) < 0)
             {
@@ -625,6 +726,18 @@ namespace weasel
             if (standardErrorWriteFd > STDERR_FILENO) close(standardErrorWriteFd);
             execv(argv.front(), argv.data());
             ExitAfterFailedStart(startupWriteFd, errno);
+        }
+
+        std::string processGroupError;
+        if (!EstablishProcessGroup(processId, processGroupError))
+        {
+            static_cast<void>(kill(processId, SIGKILL));
+            int ignoredStatus = 0;
+            while (waitpid(processId, &ignoredStatus, 0) < 0 && errno == EINTR)
+            {
+            }
+            result.error = std::move(processGroupError);
+            return result;
         }
 
         result.started = true;
@@ -667,87 +780,108 @@ namespace weasel
         int processStatus = 0;
         bool processExited = false;
         bool outputPollingFailed = false;
-        for (;;)
+        try
         {
-            if (cancelRequested.load(std::memory_order_acquire))
+            for (;;)
+            {
+                if (cancelRequested.load(std::memory_order_acquire))
+                {
+                    std::lock_guard lock(processMutex);
+                    if (activeProcess == &token)
+                    {
+                        sendGracefulStop();
+                    }
+                }
+
+                if (gracefulStopSent && !hardStopSent
+                    && std::chrono::steady_clock::now() - gracefulStopSentAt >= GracefulCancellationTimeout)
+                {
+                    // Well-behaved processes normally handle SIGTERM quickly. A bounded grace
+                    // period keeps cancellation from hanging on an ignored signal
+                    // or a stuck codec/driver.
+                    sendHardStop();
+                }
+
+                std::array<pollfd, 2> descriptors{};
+                nfds_t descriptorCount = 0;
+                if (!outputPollingFailed && standardOutputRead.get() >= 0)
+                {
+                    descriptors[descriptorCount++] = { standardOutputRead.get(), POLLIN, 0 };
+                }
+                if (!outputPollingFailed && standardErrorRead.get() >= 0)
+                {
+                    descriptors[descriptorCount++] = { standardErrorRead.get(), POLLIN, 0 };
+                }
+                const int pollResult = poll(descriptorCount ? descriptors.data() : nullptr,
+                                            descriptorCount,
+                                            static_cast<int>(ProcessPollInterval.count()));
+                if (pollResult < 0 && errno != EINTR)
+                {
+                    if (result.error.empty())
+                    {
+                        result.error = "Could not wait for process output: " + PosixErrorMessage(errno);
+                    }
+                    // Do not leave the loop and perform a blocking wait after a
+                    // broken output pipe/poll.  Force the child down, then keep
+                    // using non-blocking waitpid() until it has been reaped.
+                    outputPollingFailed = true;
+                    sendHardStop();
+                }
+                if (pollResult > 0)
+                {
+                    std::string pipeError;
+                    if (!DrainAvailablePipe(standardOutputRead,
+                                            captureStandardOutput ? &result.standardOutput : nullptr,
+                                            onStandardOutput,
+                                            pipeError)
+                        || !DrainAvailablePipe(standardErrorRead,
+                                               captureStandardError ? &result.standardError : nullptr,
+                                               onStandardError,
+                                               pipeError))
+                    {
+                        if (result.error.empty())
+                        {
+                            result.error = std::move(pipeError);
+                        }
+                        // Pipe failures have the same bounded cleanup path as a
+                        // cancellation.  SIGKILL prevents a failed pipe from
+                        // turning cleanup into an unbounded blocking wait.
+                        sendHardStop();
+                    }
+                }
+
+                std::string waitError;
+                if (!WaitForChild(processId, WNOHANG, processStatus, processExited, waitError))
+                {
+                    if (result.error.empty())
+                    {
+                        result.error = std::move(waitError);
+                    }
+                    break;
+                }
+                if (processExited)
+                {
+                    break;
+                }
+            }
+        }
+        catch (...)
+        {
             {
                 std::lock_guard lock(processMutex);
                 if (activeProcess == &token)
                 {
-                    sendGracefulStop();
+                    activeProcess = nullptr;
                 }
             }
-
-            if (gracefulStopSent && !hardStopSent
-                && std::chrono::steady_clock::now() - gracefulStopSentAt >= GracefulCancellationTimeout)
+            SignalProcess(processId, SIGKILL);
+            while (waitpid(processId, &processStatus, 0) < 0 && errno == EINTR)
             {
-                // Well-behaved processes normally handle SIGTERM quickly. A bounded grace
-                // period keeps cancellation from hanging on an ignored signal
-                // or a stuck codec/driver.
-                sendHardStop();
             }
-
-            std::array<pollfd, 2> descriptors{};
-            nfds_t descriptorCount = 0;
-            if (!outputPollingFailed && standardOutputRead.get() >= 0)
-            {
-                descriptors[descriptorCount++] = { standardOutputRead.get(), POLLIN, 0 };
-            }
-            if (!outputPollingFailed && standardErrorRead.get() >= 0)
-            {
-                descriptors[descriptorCount++] = { standardErrorRead.get(), POLLIN, 0 };
-            }
-            const int pollResult = poll(descriptorCount ? descriptors.data() : nullptr,
-                                        descriptorCount,
-                                        static_cast<int>(ProcessPollInterval.count()));
-            if (pollResult < 0 && errno != EINTR)
-            {
-                if (result.error.empty())
-                {
-                    result.error = "Could not wait for process output: " + PosixErrorMessage(errno);
-                }
-                // Do not leave the loop and perform a blocking wait after a
-                // broken output pipe/poll.  Force the child down, then keep
-                // using non-blocking waitpid() until it has been reaped.
-                outputPollingFailed = true;
-                sendHardStop();
-            }
-            if (pollResult > 0)
-            {
-                std::string pipeError;
-                if (!DrainAvailablePipe(standardOutputRead,
-                                        captureStandardOutput ? &result.standardOutput : nullptr,
-                                        onStandardOutput,
-                                        pipeError)
-                    || !DrainAvailablePipe(standardErrorRead,
-                                           captureStandardError ? &result.standardError : nullptr,
-                                           onStandardError,
-                                           pipeError))
-                {
-                    if (result.error.empty())
-                    {
-                        result.error = std::move(pipeError);
-                    }
-                    // Pipe failures have the same bounded cleanup path as a
-                    // cancellation.  SIGKILL prevents a failed pipe from
-                    // turning cleanup into an unbounded blocking wait.
-                    sendHardStop();
-                }
-            }
-
-            std::string waitError;
-            if (!WaitForChild(processId, WNOHANG, processStatus, processExited, waitError))
-            {
-                if (result.error.empty())
-                {
-                    result.error = std::move(waitError);
-                }
-                break;
-            }
-            if (processExited)
-            {
-                break;
-            }
+            // If the primary child already exited, the second group signal
+            // still removes helpers which inherited its output descriptors.
+            SignalProcess(processId, SIGKILL);
+            throw;
         }
 
         {
@@ -757,6 +891,19 @@ namespace weasel
                 activeProcess = nullptr;
             }
         }
+
+        if (!processExited)
+        {
+            SignalProcess(processId, SIGKILL);
+            while (waitpid(processId, &processStatus, 0) < 0 && errno == EINTR)
+            {
+            }
+            processExited = true;
+        }
+        // The primary process may exit before a helper. Kill the remainder of
+        // its group before draining pipes so inherited descriptors cannot
+        // keep shutdown blocked.
+        SignalProcess(processId, SIGKILL);
 
         std::string pipeError;
         if ((!DrainAvailablePipe(standardOutputRead,
@@ -827,7 +974,7 @@ namespace weasel
             return;
         }
 #if defined(_WIN32)
-        static_cast<void>(TerminateProcess(static_cast<HANDLE>(activeProcess), CancelledProcessExitCode));
+        static_cast<void>(TerminateJobObject(static_cast<HANDLE>(activeProcess), CancelledProcessExitCode));
 #else
         // The worker's poll loop owns POSIX signals. A direct signal after a
         // concurrent waitpid() could hit a recycled process identifier.
@@ -852,6 +999,7 @@ namespace weasel
         bool                    m_failed = false;
 
 #if defined(_WIN32)
+        ScopedHandle            m_processTreeJob = ScopedHandle(nullptr);
         ScopedHandle            m_process = ScopedHandle(nullptr);
         ScopedHandle            m_processThread = ScopedHandle(nullptr);
         ScopedHandle            m_standardInputWrite = ScopedHandle(nullptr);
@@ -888,7 +1036,7 @@ namespace weasel
                 return;
             }
             std::lock_guard lock(*m_processMutex);
-            if (*m_activeProcess == m_process.get())
+            if (*m_activeProcess == m_processTreeJob.get())
             {
                 *m_activeProcess = nullptr;
             }
@@ -999,6 +1147,11 @@ namespace weasel
             m_onStandardError = onStandardError;
 
 #if defined(_WIN32)
+            if (!CreateProcessTreeJob(m_processTreeJob, error))
+            {
+                return false;
+            }
+
             SECURITY_ATTRIBUTES security{};
             security.nLength = sizeof(security);
             security.bInheritHandle = TRUE;
@@ -1054,7 +1207,8 @@ namespace weasel
             mutableCommand.push_back(L'\0');
             const std::wstring workingDirectory = executable.parent_path().wstring();
             const BOOL started = CreateProcessW(
-                executable.c_str(), mutableCommand.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                executable.c_str(), mutableCommand.data(), nullptr, nullptr, TRUE,
+                CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
                 workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &startup, &process);
             const DWORD launchError = started ? 0 : GetLastError();
             standardInputRead.reset();
@@ -1068,17 +1222,35 @@ namespace weasel
 
             m_process.reset(process.hProcess);
             m_processThread.reset(process.hThread);
+            if (!AssignProcessToJobObject(m_processTreeJob.get(), m_process.get()))
+            {
+                const DWORD assignmentError = GetLastError();
+                TerminateProcess(m_process.get(), CancelledProcessExitCode);
+                WaitForSingleObject(m_process.get(), INFINITE);
+                error = "Could not take ownership of the child process tree (Windows error "
+                    + std::to_string(assignmentError) + ").";
+                return false;
+            }
+            if (ResumeThread(m_processThread.get()) == static_cast<DWORD>(-1))
+            {
+                const DWORD resumeError = GetLastError();
+                TerminateJobObject(m_processTreeJob.get(), CancelledProcessExitCode);
+                WaitForSingleObject(m_process.get(), INFINITE);
+                error = "Could not resume the child process (Windows error "
+                    + std::to_string(resumeError) + ").";
+                return false;
+            }
             m_result.started = true;
             m_started = true;
             {
                 std::lock_guard lock(*m_processMutex);
                 if (isCancelled())
                 {
-                    TerminateProcess(m_process.get(), CancelledProcessExitCode);
+                    TerminateJobObject(m_processTreeJob.get(), CancelledProcessExitCode);
                 }
                 else
                 {
-                    *m_activeProcess = m_process.get();
+                    *m_activeProcess = m_processTreeJob.get();
                 }
             }
             m_outputThread = std::thread([this]
@@ -1152,7 +1324,8 @@ namespace weasel
                 close(standardOutputPipe[0]);
                 close(standardErrorPipe[0]);
                 const std::string workingDirectory = absoluteExecutable.parent_path().string();
-                if (chdir(workingDirectory.c_str()) != 0
+                if (setpgid(0, 0) != 0
+                    || chdir(workingDirectory.c_str()) != 0
                     || dup2(standardInputPipe[0], STDIN_FILENO) < 0
                     || dup2(standardOutputPipe[1], STDOUT_FILENO) < 0
                     || dup2(standardErrorPipe[1], STDERR_FILENO) < 0)
@@ -1164,6 +1337,18 @@ namespace weasel
                 if (standardErrorPipe[1] > STDERR_FILENO) close(standardErrorPipe[1]);
                 execv(argv.front(), argv.data());
                 _exit(127);
+            }
+
+            std::string processGroupError;
+            if (!EstablishProcessGroup(processId, processGroupError))
+            {
+                static_cast<void>(kill(processId, SIGKILL));
+                int ignoredStatus = 0;
+                while (waitpid(processId, &ignoredStatus, 0) < 0 && errno == EINTR)
+                {
+                }
+                error = std::move(processGroupError);
+                return false;
             }
 
             close(standardInputPipe[0]);
@@ -1342,7 +1527,7 @@ namespace weasel
             m_standardInputWrite.reset();
             if (m_process.get() && WaitForSingleObject(m_process.get(), 0) == WAIT_TIMEOUT)
             {
-                TerminateProcess(m_process.get(), 0xE0000001u);
+                TerminateJobObject(m_processTreeJob.get(), 0xE0000001u);
             }
 #else
             m_standardInputWrite.reset();
@@ -1373,27 +1558,31 @@ namespace weasel
                         m_result.error = "Could not wait for the process (Windows error "
                             + std::to_string(GetLastError()) + ").";
                     }
-                    TerminateProcess(m_process.get(), 0xE0000001u);
+                    TerminateJobObject(m_processTreeJob.get(), 0xE0000001u);
                     WaitForSingleObject(m_process.get(), INFINITE);
                     break;
                 }
                 if (isCancelled())
                 {
                     std::lock_guard lock(*m_processMutex);
-                    if (*m_activeProcess == m_process.get())
+                    if (*m_activeProcess == m_processTreeJob.get())
                     {
-                        TerminateProcess(m_process.get(), CancelledProcessExitCode);
+                        TerminateJobObject(m_processTreeJob.get(), CancelledProcessExitCode);
                     }
                 }
             }
             unregisterProcess();
-            joinOutputThreads();
 
             DWORD exitCode = static_cast<DWORD>(-1);
             if (!GetExitCodeProcess(m_process.get(), &exitCode) && m_result.error.empty())
             {
                 m_result.error = "Could not read the process exit code.";
             }
+            // Closing stdin and waiting for the primary encoder is not enough
+            // if it launched helpers. Terminate the remaining job before
+            // joining pipe readers so inherited handles cannot keep them live.
+            static_cast<void>(TerminateJobObject(m_processTreeJob.get(), CancelledProcessExitCode));
+            joinOutputThreads();
             m_result.exitCode = exitCode;
             m_result.cancelled = !m_failed && (isCancelled() || exitCode == CancelledProcessExitCode);
 #else
@@ -1458,6 +1647,7 @@ namespace weasel
                 std::this_thread::sleep_for(PollInterval);
             }
             unregisterProcess();
+            SignalProcess(m_token.processId, SIGKILL);
             joinOutputThreads();
 
             if (exited)

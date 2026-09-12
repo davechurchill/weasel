@@ -26,9 +26,15 @@ namespace weasel
 {
     PreviewFrameCache::~PreviewFrameCache()
     {
+        shutdown();
+    }
+
+    void PreviewFrameCache::shutdown()
+    {
         {
             std::lock_guard lock(m_mutex);
             m_stopping = true;
+            ++m_generation;
             m_requests.clear();
         }
         m_workAvailable.notify_all();
@@ -36,6 +42,12 @@ namespace weasel
         {
             m_worker.join();
         }
+        std::lock_guard lock(m_mutex);
+        m_cachedFrames.clear();
+        m_failedFrames.clear();
+        m_cachedBytes = 0;
+        m_hasActiveRequest = false;
+        m_activeKey = nullptr;
     }
 
     PreviewFrameCache::FrameKey PreviewFrameCache::makeKey(const std::filesystem::path& mediaPath,

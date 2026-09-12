@@ -564,8 +564,21 @@ namespace weasel
 
     SequenceAudioController::~SequenceAudioController()
     {
+        shutdown();
+    }
+
+    void SequenceAudioController::shutdown()
+    {
+        // Signal every asynchronous owner before joining either one so a
+        // waveform extraction cannot keep running while clip audio drains.
         m_playback->clear();
         m_renderer.cancel();
+        m_waveforms.clear();
+        m_renderer.shutdown();
+        m_waveforms.shutdown();
+        m_renderQueued = false;
+        m_renderInFlight = false;
+        m_allClipsReady = false;
     }
 
     void SequenceAudioController::setCacheDirectory(std::filesystem::path cacheDirectory)

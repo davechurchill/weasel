@@ -102,6 +102,10 @@ namespace weasel
         // forgets the current layout. Suitable for New/Open.
         void reset();
 
+        // Stops playback, cancels all FFmpeg work, and joins every owned
+        // worker. Terminal; used immediately before application exit.
+        void shutdown();
+
         SequenceAudioRenderStatus renderStatus() const;
         bool renderQueued() const noexcept;
         bool renderInFlight() const noexcept;

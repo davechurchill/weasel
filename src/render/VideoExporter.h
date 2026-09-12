@@ -60,6 +60,7 @@ namespace weasel
         std::string         m_ffmpegCommand;
         std::thread         m_worker;
         std::atomic_bool    m_cancelRequested = false;
+        bool                m_shutdown = false;
         std::atomic_bool    m_finishRequested = false;
         std::atomic_bool    m_previewEnabled = false;
         std::atomic<ExportRenderer> m_activeRenderer = ExportRenderer::Shader;
@@ -95,6 +96,9 @@ namespace weasel
         // Requests that the active FFmpeg process stop. The export is staged,
         // so a cancelled job never publishes a partial output file.
         void cancel();
+
+        // Cancels and synchronously joins the export worker. Terminal.
+        void shutdown();
 
         // Completes the current frame and publishes a valid partial export.
         void finishNow();

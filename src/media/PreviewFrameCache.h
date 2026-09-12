@@ -96,6 +96,11 @@ namespace weasel
         PreviewFrameCache(const PreviewFrameCache&) = delete;
         PreviewFrameCache& operator=(const PreviewFrameCache&) = delete;
 
+        // Stops accepting work and waits for the decode worker to exit. This
+        // is terminal and is used by the application shutdown path so no
+        // preview thread can outlive the main window.
+        void shutdown();
+
         void request(const std::filesystem::path& mediaPath,
                      double sourceTime,
                      int maximumPreviewEdge,

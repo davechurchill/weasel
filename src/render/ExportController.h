@@ -86,6 +86,8 @@ namespace weasel
         void closeEncodingWindow(sf::RenderWindow& mainWindow, bool cancelExport);
 
         void cancel();
+        // Cancels and joins the exporter before destroying its window.
+        void shutdown(sf::RenderWindow& mainWindow);
         ExportStatus status() const;
     };
 }

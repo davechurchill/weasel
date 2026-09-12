@@ -114,6 +114,10 @@ namespace weasel
         AudioWaveformCache(const AudioWaveformCache&) = delete;
         AudioWaveformCache& operator=(const AudioWaveformCache&) = delete;
 
+        // Cancels FFmpeg, stops the worker, and waits for both to exit. This
+        // cache cannot accept new requests after shutdown.
+        void shutdown();
+
         // Queues the source-time tiles intersecting sourceRanges. Calling this
         // again with the same tile set is a no-op. Extending or trimming a
         // range reuses every tile already stored on disk.

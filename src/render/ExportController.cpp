@@ -93,7 +93,7 @@ namespace weasel
         // Normal application shutdown should call closeEncodingWindow() while
         // the primary ImGui-SFML context still exists. This fallback still
         // releases the secondary window when a caller omits that cleanup.
-        m_exporter.cancel();
+        m_exporter.shutdown();
         destroyEncodingWindow();
     }
 
@@ -357,6 +357,13 @@ namespace weasel
     void ExportController::cancel()
     {
         m_exporter.cancel();
+    }
+
+    void ExportController::shutdown(sf::RenderWindow& mainWindow)
+    {
+        m_exporter.shutdown();
+        destroyEncodingWindow();
+        restoreMainWindowContext(mainWindow);
     }
 
     ExportStatus ExportController::status() const

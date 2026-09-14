@@ -1,6 +1,8 @@
 #include "render/RenderPreparation.h"
 
 #include <algorithm>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 
 namespace weasel
@@ -22,6 +24,8 @@ namespace weasel
 
         SequenceRenderPlanOptions options;
         options.validateLuts = true;
+        options.skipMissingMedia = true;
+        options.skippedMedia = &prepared.skippedMedia;
         return SequenceRenderPlan::build(project, prepared.plan, error, options);
     }
 
@@ -44,6 +48,44 @@ namespace weasel
         configuration.durationSeconds = prepared.duration;
         configuration.audioEntries = audioEntriesOverride
             ? *audioEntriesOverride : prepared.plan.audioEntries();
+        if (audioEntriesOverride)
+        {
+            std::unordered_map<int, const SequenceRenderEntry*> availableAudioClips;
+            for (const SequenceRenderEntry& entry : prepared.plan.entries())
+            {
+                if (entry.includeAudio)
+                {
+                    availableAudioClips.emplace(entry.clip.id, &entry);
+                }
+            }
+            std::vector<SequenceRenderEntry> selectedAudioEntries;
+            selectedAudioEntries.reserve(audioEntriesOverride->size());
+            for (const SequenceRenderEntry& cachedEntry : *audioEntriesOverride)
+            {
+                const auto original = availableAudioClips.find(cachedEntry.clip.id);
+                if (original == availableAudioClips.end())
+                {
+                    continue;
+                }
+                std::error_code fileError;
+                if (std::filesystem::exists(cachedEntry.asset.path, fileError))
+                {
+                    selectedAudioEntries.push_back(cachedEntry);
+                }
+                else
+                {
+                    if (onLog)
+                    {
+                        onLog("WARNING: Cached audio is unavailable for clip "
+                            + std::to_string(cachedEntry.clip.id)
+                            + "; decoding the original media instead: "
+                            + cachedEntry.asset.path.string() + "\n");
+                    }
+                    selectedAudioEntries.push_back(*original->second);
+                }
+            }
+            configuration.audioEntries = std::move(selectedAudioEntries);
+        }
         configuration.cancelRequested = &cancelRequested;
         configuration.onLog = onLog;
         return encoder.open(configuration, error);

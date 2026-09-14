@@ -97,16 +97,16 @@ int main(int argc, char** argv)
         std::cerr << "encoder: " << error << '\n';
         return 1;
     }
+    const long long frameCount = static_cast<long long>(
+        std::ceil(duration * configuration.frameRate - 0.000000001));
     weasel::FfmpegStreamingVideoSource source;
     if (!source.open(entries, configuration.width, configuration.height,
-                     configuration.frameRate, duration, error,
+                     configuration.frameRate, frameCount, error,
                      encoder.videoPixelFormat(), &cancelled))
     {
         std::cerr << "graph: " << error << '\n';
         return 1;
     }
-    const long long frameCount = static_cast<long long>(
-        std::ceil(duration * configuration.frameRate - 0.000000001));
     double sourceSeconds = 0.0;
     double encodeSeconds = 0.0;
     for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)

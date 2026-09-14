@@ -45,6 +45,8 @@ namespace weasel
         bool                   cancelRequested = false;
         // Negative until FFmpeg has produced enough progress to estimate a rate.
         double                 estimatedRemainingSeconds = -1.0;
+        // Smoothed number of output video frames completed per wall-clock second.
+        double                 framesPerSecond = 0.0;
         std::string            backendDescription;
         // FFmpeg's current encoded output size and its extrapolated final size.
         std::uint64_t          outputFileSizeBytes = 0;

@@ -16,7 +16,7 @@
 
 namespace
 {
-    std::string ProjectedFileSizeText(std::uint64_t bytes)
+    std::string FileSizeText(std::uint64_t bytes)
     {
         if (bytes == 0)
         {
@@ -176,11 +176,33 @@ namespace weasel
         {
             ImGui::PopStyleColor();
         }
-        ImGui::TextDisabled("Time remaining: %s",
-                            FormatEstimatedTime(exportStatus.estimatedRemainingSeconds).c_str());
-        ImGui::TextDisabled("Total elapsed: %s",
-                            FormatEstimatedTime(exportStatus.elapsedSeconds).c_str());
-        ImGui::TextDisabled("Projected file size: %s", ProjectedFileSizeText(exportStatus.projectedFileSizeBytes).c_str());
+        const ImGuiTableFlags metricsFlags = ImGuiTableFlags_BordersInnerH
+            | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg;
+        if (ImGui::BeginTable("ExportProgressMetrics", 2, metricsFlags))
+        {
+            ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            const auto drawMetric = [](const char* label, const std::string& value)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%s", label);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(value.c_str());
+            };
+
+            char fpsText[32]{};
+            if (exportStatus.framesPerSecond > 0.0)
+            {
+                std::snprintf(fpsText, sizeof(fpsText), "%.1f fps", exportStatus.framesPerSecond);
+            }
+            drawMetric("Frames per second", fpsText[0] ? fpsText : "Calculating...");
+            drawMetric("Written size", FileSizeText(exportStatus.outputFileSizeBytes));
+            drawMetric("Time remaining", FormatEstimatedTime(exportStatus.estimatedRemainingSeconds));
+            drawMetric("Total elapsed", FormatEstimatedTime(exportStatus.elapsedSeconds));
+            drawMetric("Projected file size", FileSizeText(exportStatus.projectedFileSizeBytes));
+            ImGui::EndTable();
+        }
 
         if (!exportStatus.message.empty())
         {
@@ -280,6 +302,7 @@ namespace weasel
             if (ImGui::BeginChild("EncodingFfmpegDetails", ImVec2(0.0f, detailsHeight), ImGuiChildFlags_Borders,
                                   ImGuiWindowFlags_None))
             {
+                const bool followLatest = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 8.0f;
                 ImGui::PushTextWrapPos(0.0f);
                 if (!exportStatus.backendDescription.empty())
                 {
@@ -298,6 +321,10 @@ namespace weasel
                     ImGui::TextUnformatted(exportStatus.log.c_str());
                 }
                 ImGui::PopTextWrapPos();
+                if (followLatest)
+                {
+                    ImGui::SetScrollHereY(1.0f);
+                }
             }
             ImGui::EndChild();
         }

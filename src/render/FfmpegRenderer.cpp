@@ -2,8 +2,11 @@
 #include "render/RenderPreparation.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -70,7 +73,38 @@ namespace weasel
                 visualEntries.push_back(entry);
             }
         }
+        const long long frameCount = std::max(1LL, static_cast<long long>(
+            std::ceil(prepared.duration * prepared.frameRate - 0.000000001)));
+        if (callbacks.onLog)
+        {
+            std::ostringstream setup;
+            setup << "FFmpeg Render: " << visualEntries.size()
+                  << " visual inputs; " << frameCount << " output frames expected.\n"
+                  << "Video layers (back to front):\n"
+                  << std::fixed << std::setprecision(3);
+            constexpr std::size_t MaximumListedInputs = 40;
+            for (std::size_t index = 0;
+                 index < std::min(visualEntries.size(), MaximumListedInputs); ++index)
+            {
+                const SequenceRenderEntry& entry = visualEntries[index];
+                setup << "  " << index + 1 << ". " << entry.asset.path.filename().string()
+                      << " | timeline " << entry.clip.timelineStart << '-'
+                      << entry.clip.timelineEnd() << " s"
+                      << " | source " << entry.clip.sourceIn << '-'
+                      << entry.clip.sourceOut << " s"
+                      << " | " << entry.asset.width << 'x' << entry.asset.height
+                      << " @ " << entry.asset.fps << " fps\n";
+            }
+            if (visualEntries.size() > MaximumListedInputs)
+            {
+                setup << "  ... " << visualEntries.size() - MaximumListedInputs
+                      << " additional visual inputs\n";
+            }
+            setup << "Opening linked video/audio encoders...\n";
+            callbacks.onLog(setup.str());
+        }
 
+        const auto encoderStartedAt = std::chrono::steady_clock::now();
         FfmpegTimelineEncoder encoder;
         if (!OpenTimelineEncoder(request.project, prepared, request.stagingPath,
                                  request.cancelRequested, request.audioEntriesOverride,
@@ -78,18 +112,35 @@ namespace weasel
         {
             return result;
         }
+        if (callbacks.onLog)
+        {
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(2)
+                    << "Encoders ready after " << std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - encoderStartedAt).count()
+                    << " s. Building and validating the FFmpeg video filter graph...\n";
+            callbacks.onLog(message.str());
+        }
+        const auto graphStartedAt = std::chrono::steady_clock::now();
         FfmpegStreamingVideoSource videoSource;
         if (!videoSource.open(visualEntries, prepared.width, prepared.height,
-                              prepared.frameRate, prepared.duration,
+                              prepared.frameRate, frameCount,
                               result.error, encoder.videoPixelFormat(),
                               &request.cancelRequested))
         {
             encoder.abort();
             return result;
         }
-
-        const long long frameCount = std::max(1LL, static_cast<long long>(
-            std::ceil(prepared.duration * prepared.frameRate - 0.000000001)));
+        if (callbacks.onLog)
+        {
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(2)
+                    << "Filter graph ready after " << std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - graphStartedAt).count()
+                    << " s. Decoding, compositing and encoding frames...\n";
+            callbacks.onLog(message.str());
+        }
+        const auto framesStartedAt = std::chrono::steady_clock::now();
 
         for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
@@ -104,18 +155,24 @@ namespace weasel
             if (!videoSource.readNativeFrame(nativeFrame, reachedEnd,
                                              result.error))
             {
+                result.error = "Output frame " + std::to_string(frameIndex + 1)
+                    + "/" + std::to_string(frameCount) + ": " + result.error;
                 encoder.abort();
                 return result;
             }
             if (reachedEnd)
             {
-                result.error = "The streaming FFmpeg graph ended before the sequence duration.";
+                result.error = "The streaming FFmpeg graph ended at output frame "
+                    + std::to_string(frameIndex + 1) + "/" + std::to_string(frameCount)
+                    + " before the sequence was complete.";
                 encoder.abort();
                 return result;
             }
             if (!encoder.writeNativeFrame(nativeFrame, frameIndex,
                                           result.error))
             {
+                result.error = "Output frame " + std::to_string(frameIndex + 1)
+                    + "/" + std::to_string(frameCount) + ": " + result.error;
                 encoder.abort();
                 return result;
             }
@@ -124,6 +181,17 @@ namespace weasel
                 callbacks.onProgress(std::min(prepared.duration,
                     static_cast<double>(frameIndex + 1) / prepared.frameRate));
             }
+        }
+        if (callbacks.onLog)
+        {
+            const double frameSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - framesStartedAt).count();
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(2)
+                    << "All " << frameCount << " video frames encoded in " << frameSeconds
+                    << " s (" << (frameSeconds > 0.0 ? frameCount / frameSeconds : 0.0)
+                    << " fps). Flushing audio/video and finalizing MP4...\n";
+            callbacks.onLog(message.str());
         }
         return CompleteRender(encoder.finish(prepared.duration), prepared.duration);
     }

@@ -2,6 +2,12 @@
 #include "media/MediaDecoder.h"
 #include "media/MediaProbe.h"
 #include "media/PreviewFrameCache.h"
+#include "render/RenderPreparation.h"
+
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+}
 
 #include <atomic>
 #include <chrono>
@@ -88,9 +94,47 @@ namespace
             && frame->width == width && frame->height == height && frame->data[0]
             ? frame : nullptr;
     }
+
+    bool ExpectStreamingFrameCount(const std::vector<weasel::SequenceRenderEntry>& entries,
+                                   int width, int height, double frameRate,
+                                   std::int64_t expectedFrames, std::string& error)
+    {
+        weasel::FfmpegStreamingVideoSource source;
+        if (!source.open(entries, width, height, frameRate, expectedFrames, error))
+        {
+            return false;
+        }
+        for (std::int64_t index = 0; index < expectedFrames; ++index)
+        {
+            bool reachedEnd = false;
+            AVFrame* frame = nullptr;
+            if (!source.readNativeFrame(frame, reachedEnd, error))
+            {
+                return false;
+            }
+            if (reachedEnd || !RgbaFrame(frame, width, height))
+            {
+                error = "Graph ended or returned an invalid frame at "
+                    + std::to_string(index) + " of " + std::to_string(expectedFrames) + ".";
+                return false;
+            }
+        }
+        bool reachedEnd = false;
+        AVFrame* frame = nullptr;
+        if (!source.readNativeFrame(frame, reachedEnd, error))
+        {
+            return false;
+        }
+        if (!reachedEnd)
+        {
+            error = "Graph produced more than " + std::to_string(expectedFrames) + " frames.";
+            return false;
+        }
+        return true;
+    }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / "weasel-ffmpeg-smoke";
@@ -110,6 +154,10 @@ int main()
     {
         return Fail("test media", "could not write input");
     }
+    if (!avcodec_find_decoder(AV_CODEC_ID_PNG))
+    {
+        return Fail("linked PNG decoder", "FFmpeg must be built with zlib support");
+    }
 
     std::string error;
     weasel::FfmpegMediaInfo info;
@@ -124,6 +172,127 @@ int main()
         || imageAsset.width != 4 || imageAsset.height != 3)
     {
         return Fail("still-image probe", error);
+    }
+    if (argc > 1)
+    {
+        weasel::MediaAsset suppliedImage;
+        if (!weasel::MediaProbe::probe(argv[1], suppliedImage, error,
+                                       weasel::MediaKind::Image))
+        {
+            return Fail("supplied-image probe", error);
+        }
+        weasel::SequenceRenderEntry suppliedEntry;
+        suppliedEntry.includeVideo = true;
+        suppliedEntry.asset = suppliedImage;
+        suppliedEntry.clip.sourceOut = 0.1;
+        if (!ExpectStreamingFrameCount({ suppliedEntry }, 64, 64, 10.0, 1, error))
+        {
+            return Fail("supplied-image FFmpeg graph", error);
+        }
+    }
+    weasel::ProjectData missingMediaProject;
+    missingMediaProject.sequence().width = 64;
+    missingMediaProject.sequence().height = 64;
+    missingMediaProject.sequence().fps = 10.0;
+    missingMediaProject.sequence().formatConfigured = true;
+    const int existingImageId = missingMediaProject.addAsset(imageAsset)->id;
+    weasel::MediaAsset missingImage = imageAsset;
+    missingImage.id = 0;
+    missingImage.path = directory / "intentionally-missing-image.png";
+    missingImage.name = "intentionally-missing-image.png";
+    const int missingImageId = missingMediaProject.addAsset(missingImage)->id;
+    weasel::MediaAsset missingAudio;
+    missingAudio.path = directory / "intentionally-missing-audio.wav";
+    missingAudio.name = "intentionally-missing-audio.wav";
+    missingAudio.kind = weasel::MediaKind::Audio;
+    missingAudio.duration = 1.0;
+    missingAudio.hasAudio = true;
+    const int missingAudioId = missingMediaProject.addAsset(missingAudio)->id;
+    int videoTrack = -1;
+    int audioTrack = -1;
+    for (int index = 0;
+         index < static_cast<int>(missingMediaProject.sequence().tracks.size()); ++index)
+    {
+        const auto type = missingMediaProject.sequence().tracks[index].type;
+        if (type == weasel::TimelineTrackType::Video && videoTrack < 0)
+        {
+            videoTrack = index;
+        }
+        if (type == weasel::TimelineTrackType::Audio && audioTrack < 0)
+        {
+            audioTrack = index;
+        }
+    }
+    if (videoTrack < 0 || audioTrack < 0
+        || !missingMediaProject.addClip(existingImageId, videoTrack, 0.0)
+        || !missingMediaProject.addClip(missingImageId, videoTrack, 4.0)
+        || !missingMediaProject.addClip(missingAudioId, audioTrack, 4.0))
+    {
+        return Fail("missing-media project", "could not create test clips");
+    }
+    missingMediaProject.normalize();
+    weasel::PreparedSequenceRender missingMediaPrepared;
+    if (!weasel::PrepareSequenceRender(missingMediaProject, missingMediaPrepared, error)
+        || missingMediaPrepared.plan.entries().size() != 1
+        || missingMediaPrepared.skippedMedia.size() != 2
+        || missingMediaPrepared.duration < 5.0)
+    {
+        return Fail("missing-media export preparation", error.empty()
+            ? "missing clips were not skipped while retaining sequence duration" : error);
+    }
+    if (!missingMediaProject.deleteAsset(existingImageId))
+    {
+        return Fail("all-missing project", "could not remove the available image");
+    }
+    weasel::PreparedSequenceRender allMissingPrepared;
+    if (!weasel::PrepareSequenceRender(missingMediaProject, allMissingPrepared, error)
+        || !allMissingPrepared.plan.entries().empty()
+        || allMissingPrepared.skippedMedia.size() != 2
+        || allMissingPrepared.duration < 5.0)
+    {
+        return Fail("all-missing export preparation", error.empty()
+            ? "the all-missing timeline was not retained for blank export" : error);
+    }
+    if (!ExpectStreamingFrameCount({}, 64, 64, 10.0, 2, error))
+    {
+        return Fail("blank-video fallback", error);
+    }
+    const std::filesystem::path blankOutput = directory / "missing-media.mp4";
+    std::atomic_bool blankCancelled = false;
+    weasel::FfmpegTimelineEncoder blankEncoder;
+    if (!weasel::OpenTimelineEncoder(missingMediaProject, allMissingPrepared,
+                                     blankOutput, blankCancelled, nullptr, {},
+                                     blankEncoder, error))
+    {
+        return Fail("blank export encoder", error);
+    }
+    const auto blankFrames = static_cast<std::int64_t>(std::ceil(
+        allMissingPrepared.duration * allMissingPrepared.frameRate - 0.000000001));
+    weasel::FfmpegStreamingVideoSource blankSource;
+    if (!blankSource.open({}, allMissingPrepared.width, allMissingPrepared.height,
+                          allMissingPrepared.frameRate, blankFrames, error,
+                          blankEncoder.videoPixelFormat(), &blankCancelled))
+    {
+        return Fail("blank export graph", error);
+    }
+    for (std::int64_t frameIndex = 0; frameIndex < blankFrames; ++frameIndex)
+    {
+        bool reachedEnd = false;
+        AVFrame* frame = nullptr;
+        if (!blankSource.readNativeFrame(frame, reachedEnd, error) || reachedEnd
+            || !blankEncoder.writeNativeFrame(frame, frameIndex, error))
+        {
+            return Fail("blank export frame", error.empty() ? "unexpected graph EOF" : error);
+        }
+    }
+    const weasel::FfmpegOperationResult blankResult = blankEncoder.finish(
+        allMissingPrepared.duration);
+    weasel::FfmpegMediaInfo blankInfo;
+    if (!blankResult.succeeded || !weasel::ProbeMediaWithFfmpeg(blankOutput, blankInfo, error)
+        || !blankInfo.hasVideo || !blankInfo.hasAudio
+        || blankInfo.durationSeconds < allMissingPrepared.duration - 0.2)
+    {
+        return Fail("blank export output", blankResult.error.empty() ? error : blankResult.error);
     }
     weasel::PreviewFrameCache previewCache;
     previewCache.request(imageInput, 0.0, 4, 1, false, true, true);
@@ -149,7 +318,7 @@ int main()
     stillEntry.clip.sourceOut = 0.3;
     stillEntry.clip.timelineStart = 0.0;
     weasel::FfmpegStreamingVideoSource stillSource;
-    if (!stillSource.open({ stillEntry }, 64, 64, 10.0, 0.3, error))
+    if (!stillSource.open({ stillEntry }, 64, 64, 10.0, 3, error))
     {
         return Fail("still-image streaming graph", error);
     }
@@ -168,7 +337,7 @@ int main()
     croppedStill.clip.video.cropLeft = 0.5;
     croppedStill.clip.video.invertColor = true;
     weasel::FfmpegStreamingVideoSource croppedStillSource;
-    if (!croppedStillSource.open({ stillEntry, croppedStill }, 4, 3, 10.0, 0.1, error))
+    if (!croppedStillSource.open({ stillEntry, croppedStill }, 4, 3, 10.0, 1, error))
     {
         return Fail("cropped alpha graph", error);
     }
@@ -180,6 +349,23 @@ int main()
     {
         return Fail("cropped alpha frame", error.empty()
             ? "the crop obscured the lower layer" : error);
+    }
+    // A non-integral frame duration previously made the graph's time-based
+    // trim round down, so export failed on the final requested frame.
+    weasel::SequenceRenderEntry fractionalStill = stillEntry;
+    fractionalStill.clip.sourceOut = 0.0515625;
+    if (!ExpectStreamingFrameCount({ fractionalStill }, 4, 3, 60.0, 4, error))
+    {
+        return Fail("fractional-duration streaming graph", error);
+    }
+    constexpr double ProjectDuration = 4372.8515625;
+    constexpr double ProjectFrameRate = 60.0;
+    const std::int64_t projectFrameCount = static_cast<std::int64_t>(
+        std::ceil(ProjectDuration * ProjectFrameRate - 0.000000001));
+    if (!ExpectStreamingFrameCount({}, 2, 2, ProjectFrameRate,
+                                   projectFrameCount, error))
+    {
+        return Fail("4300_L1 frame-count regression", error);
     }
     std::atomic_bool cancelled = false;
     std::vector<weasel::FfmpegAudioPeak> peaks;
@@ -237,6 +423,48 @@ int main()
     {
         return Fail("encoder finish", encoded.error);
     }
+    if (encoded.log.find("Selected video encoder:") == std::string::npos
+        || encoded.log.find("Selected audio encoder:") == std::string::npos
+        || encoded.log.find("MP4 container finalized successfully.") == std::string::npos)
+    {
+        return Fail("encoder diagnostic log", "missing encoder or finalization details");
+    }
+    weasel::FfmpegTimelineEncoder invalidAudioEncoder;
+    weasel::FfmpegTimelineEncoder::Configuration invalidAudioConfiguration = configuration;
+    invalidAudioConfiguration.outputPath = directory / "invalid-audio.mp4";
+    weasel::SequenceRenderEntry invalidAudioEntry = entry;
+    invalidAudioEntry.asset.path = imageInput;
+    invalidAudioConfiguration.audioEntries = { invalidAudioEntry };
+    std::string audioWarnings;
+    invalidAudioConfiguration.onLog = [&audioWarnings](std::string_view message)
+    {
+        audioWarnings.append(message);
+    };
+    if (!invalidAudioEncoder.open(invalidAudioConfiguration, error))
+    {
+        return Fail("invalid-audio encoder open", error);
+    }
+    for (int index = 0; index < 3; ++index)
+    {
+        if (!invalidAudioEncoder.writeRgbaFrame(frame.data(), 64 * 4, index, error))
+        {
+            return Fail("invalid-audio frame", error);
+        }
+    }
+    const weasel::FfmpegOperationResult invalidAudioResult = invalidAudioEncoder.finish(0.3);
+    if (!invalidAudioResult.succeeded
+        || audioWarnings.find("WARNING: Audio input") == std::string::npos)
+    {
+        return Fail("invalid-audio fallback", invalidAudioResult.error.empty()
+            ? "missing warning or failed export" : invalidAudioResult.error);
+    }
+    weasel::FfmpegMediaInfo invalidAudioInfo;
+    if (!weasel::ProbeMediaWithFfmpeg(invalidAudioConfiguration.outputPath,
+                                      invalidAudioInfo, error)
+        || !invalidAudioInfo.hasVideo || !invalidAudioInfo.hasAudio)
+    {
+        return Fail("invalid-audio output", error);
+    }
     weasel::FfmpegMediaInfo outputInfo;
     if (!weasel::ProbeMediaWithFfmpeg(videoOutput, outputInfo, error)
         || !outputInfo.hasVideo || !outputInfo.hasAudio)
@@ -277,7 +505,7 @@ int main()
     streamingEntry.clip.sourceOut = 0.3;
     streamingEntry.clip.timelineStart = 0.0;
     weasel::FfmpegStreamingVideoSource streamingSource;
-    if (!streamingSource.open({ streamingEntry }, 64, 64, 10.0, 0.3, error))
+    if (!streamingSource.open({ streamingEntry }, 64, 64, 10.0, 3, error))
     {
         return Fail("streaming graph open", error);
     }
@@ -300,7 +528,7 @@ int main()
         return Fail("native encoder open", error);
     }
     weasel::FfmpegStreamingVideoSource nativeSource;
-    if (!nativeSource.open({ streamingEntry }, 64, 64, 10.0, 0.3, error,
+    if (!nativeSource.open({ streamingEntry }, 64, 64, 10.0, 3, error,
                            streamedEncoder.videoPixelFormat()))
     {
         return Fail("native streaming graph open", error);

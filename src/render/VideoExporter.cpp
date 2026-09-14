@@ -13,13 +13,41 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <string_view>
 #include <system_error>
 #include <utility>
 
 namespace
 {
+    void AppendStatusLog(weasel::ExportStatus& status, std::string_view text)
+    {
+        status.log.append(text.data(), text.size());
+        constexpr std::size_t MaximumLogBytes = 64 * 1024;
+        if (status.log.size() > MaximumLogBytes)
+        {
+            const std::size_t firstWholeLine = status.log.find(
+                '\n', status.log.size() - MaximumLogBytes);
+            status.log.erase(0, firstWholeLine == std::string::npos
+                ? status.log.size() - MaximumLogBytes : firstWholeLine + 1);
+        }
+    }
+
+    const char* PresetLabel(weasel::ExportPreset preset)
+    {
+        switch (preset)
+        {
+        case weasel::ExportPreset::VeryFast: return "Very Fast";
+        case weasel::ExportPreset::Fast: return "Fast";
+        case weasel::ExportPreset::Medium: return "Medium";
+        case weasel::ExportPreset::Slow: return "Slow";
+        case weasel::ExportPreset::VerySlow: return "Very Slow";
+        }
+        return "Unknown";
+    }
+
     void UpdateProjectedFileSize(weasel::ExportStatus& status, double duration)
     {
         if (status.outputFileSizeBytes == 0 || status.processedSeconds < 0.25
@@ -91,7 +119,8 @@ namespace weasel
         PreparedSequenceRender preparedRender;
         std::string validationError;
         if (!PrepareSequenceRender(prepared, preparedRender, validationError)
-            || preparedRender.plan.entries().empty())
+            || (preparedRender.plan.entries().empty()
+                && preparedRender.skippedMedia.empty()))
         {
             error = validationError.empty()
                 ? "Add at least one clip to the sequence before exporting."
@@ -242,36 +271,91 @@ namespace weasel
     {
         const bool direct = project.exportSettings().renderer == ExportRenderer::Ffmpeg;
         const double duration = prepared.duration;
+        const double frameRate = prepared.frameRate;
+        const long long expectedFrames = std::max(1LL, static_cast<long long>(
+            std::ceil(duration * frameRate - 0.000000001)));
         const auto startedAt = std::chrono::steady_clock::now();
         const std::filesystem::path stagingPath = StagingFilePath(
             outputPath, "export", generation);
         RemoveFileQuietly(stagingPath);
 
-        const auto setCancelled = [this, &outputPath](const std::string& log)
+        const auto setCancelled = [this, &outputPath]()
         {
             std::lock_guard lock(m_mutex);
-            const double progress = m_status.progress;
-            const double processed = m_status.processedSeconds;
-            const double durationSeconds = m_status.durationSeconds;
-            m_status = {
-                ExportState::Cancelled, outputPath, "Export cancelled.", TailText(log),
-                progress, processed, durationSeconds, true
-            };
+            m_status.state = ExportState::Cancelled;
+            m_status.outputPath = outputPath;
+            m_status.message = "Export cancelled.";
+            m_status.cancelRequested = true;
+            AppendStatusLog(m_status, "Export cancelled. Temporary output removed.\n");
         };
         if (m_cancelRequested.load(std::memory_order_acquire))
         {
-            setCancelled({});
+            setCancelled();
             return;
         }
 
         {
+            const ExportSettings& settings = project.exportSettings();
+            const std::size_t visualClips = static_cast<std::size_t>(std::count_if(
+                prepared.plan.entries().begin(), prepared.plan.entries().end(),
+                [](const SequenceRenderEntry& entry) { return entry.includeVideo; }));
+            const std::size_t audioClips = static_cast<std::size_t>(std::count_if(
+                prepared.plan.entries().begin(), prepared.plan.entries().end(),
+                [](const SequenceRenderEntry& entry) { return entry.includeAudio; }));
+            std::ostringstream summary;
+            summary << std::fixed << std::setprecision(3)
+                    << "Export started\n"
+                    << "Project: " << project.name() << '\n'
+                    << "Output: " << outputPath.string() << '\n'
+                    << "Renderer: " << (direct ? "FFmpeg Render" : "Shader Render")
+                    << " (linked libraries; no external process)\n"
+                    << "Sequence: " << prepared.width << 'x' << prepared.height
+                    << " @ " << frameRate << " fps; " << duration << " seconds; "
+                    << expectedFrames << " output frames\n"
+                    << "Inputs: " << visualClips << " video clips, " << audioClips
+                    << " audio clips" << (cachedAudioEntries.empty() ? "" : " (cached audio)") << '\n'
+                    << "Requested encoding: "
+                    << (settings.codec == ExportCodec::H265 ? "H.265" : "H.264")
+                    << ", GPU " << (settings.useGpuEncoding ? "requested" : "disabled")
+                    << ", preset " << PresetLabel(settings.preset) << ", ";
+            if (settings.rateControl == ExportRateControl::TargetBitrate)
+            {
+                summary << settings.videoBitrateKbps << " kb/s target video bitrate";
+            }
+            else
+            {
+                summary << "quality setting " << settings.crf;
+            }
+            summary << ", " << (settings.audioCodec == AudioCodec::Mp3 ? "MP3" : "AAC")
+                    << " audio at " << settings.audioBitrateKbps << " kb/s\n";
+            if (!prepared.skippedMedia.empty())
+            {
+                summary << "WARNING: " << prepared.skippedMedia.size()
+                        << " clips reference missing media. Missing video layers will be blank"
+                        << " and missing audio will be silent.\n";
+                constexpr std::size_t MaximumListedMissingClips = 40;
+                for (std::size_t index = 0;
+                     index < std::min(prepared.skippedMedia.size(), MaximumListedMissingClips);
+                     ++index)
+                {
+                    const SkippedMediaClip& missing = prepared.skippedMedia[index];
+                    summary << "  Missing " << (missing.video ? "video" : "audio")
+                            << " clip " << missing.clipId << " at "
+                            << missing.timelineStart << '-' << missing.timelineEnd
+                            << " s: " << missing.path.string() << '\n';
+                }
+                if (prepared.skippedMedia.size() > MaximumListedMissingClips)
+                {
+                    summary << "  ... " << prepared.skippedMedia.size()
+                            - MaximumListedMissingClips << " more missing clips\n";
+                }
+            }
+            summary << '\n';
             std::lock_guard lock(m_mutex);
             m_status.message = direct
                 ? "Rendering with FFmpeg Render (linked libraries)..."
                 : "Rendering with Shader Render (linked encoder)...";
-            m_status.log = direct
-                ? "FFmpeg Render\nIn-process libavfilter/libavcodec/libavformat\n"
-                : "Shader Render\nIn-process libavcodec/libavformat\n";
+            m_status.log = summary.str();
         }
 
         auto rateSampleAt = startedAt;
@@ -279,8 +363,10 @@ namespace weasel
         double rateSampleProgress = 0.0;
         double smoothedRate = 0.0;
         bool haveRateSample = false;
-        const auto reportProgress = [this, duration, stagingPath,
-                                     &rateSampleAt, &nextSizeSampleAt, &rateSampleProgress,
+        bool finalizingLogged = false;
+        const auto reportProgress = [this, duration, frameRate, stagingPath,
+                                     &rateSampleAt, &nextSizeSampleAt,
+                                     &rateSampleProgress, &finalizingLogged,
                                      &smoothedRate, &haveRateSample](double seconds)
         {
             std::lock_guard lock(m_mutex);
@@ -323,6 +409,7 @@ namespace weasel
                 smoothedRate = smoothedRate > 0.0
                     ? smoothedRate * 0.75 + instantaneousRate * 0.25
                     : instantaneousRate;
+                m_status.framesPerSecond = smoothedRate * frameRate;
                 m_status.estimatedRemainingSeconds = smoothedRate > 0.0
                     ? std::max(0.0, (duration - processed) / smoothedRate) : -1.0;
                 rateSampleAt = now;
@@ -332,6 +419,11 @@ namespace weasel
             {
                 m_status.message = "Finalizing export...";
                 m_status.estimatedRemainingSeconds = 0.0;
+                if (!finalizingLogged)
+                {
+                    AppendStatusLog(m_status, "All output frames submitted. Finalizing audio and MP4 container...\n");
+                    finalizingLogged = true;
+                }
             }
             UpdateProjectedFileSize(m_status, duration);
         };
@@ -347,11 +439,7 @@ namespace weasel
             {
                 return;
             }
-            m_status.log.append(chunk.data(), chunk.size());
-            if (m_status.log.size() > 48 * 1024)
-            {
-                m_status.log.erase(0, m_status.log.size() - 48 * 1024);
-            }
+            AppendStatusLog(m_status, chunk);
         };
 
         const auto onPreview = [this](const sf::Image& image)
@@ -404,7 +492,7 @@ namespace weasel
             RemoveFileQuietly(stagingPath);
             if (m_cancelRequested.load(std::memory_order_acquire) || outcome.cancelled)
             {
-                setCancelled(outcome.log);
+                setCancelled();
                 return;
             }
             std::lock_guard lock(m_mutex);
@@ -413,17 +501,15 @@ namespace weasel
             {
                 detail = "The linked FFmpeg encoder did not complete.";
             }
-            m_status = {
-                ExportState::Failed, outputPath,
-                direct ? "FFmpeg renderer failed." : "Shader renderer failed.",
-                detail + (outcome.log.empty() ? "" : "\n" + TailText(outcome.log))
-            };
+            m_status.state = ExportState::Failed;
+            m_status.message = direct ? "FFmpeg renderer failed." : "Shader renderer failed.";
+            AppendStatusLog(m_status, "ERROR: " + detail + "\nTemporary output removed.\n");
             return;
         }
         if (outcome.cancelled || m_cancelRequested.load(std::memory_order_acquire))
         {
             RemoveFileQuietly(stagingPath);
-            setCancelled(outcome.log);
+            setCancelled();
             return;
         }
 
@@ -439,13 +525,26 @@ namespace weasel
             }
             else if (PublishStagingFile(stagingPath, outputPath, "the export", commitError))
             {
-                m_status = {
-                    ExportState::Succeeded, outputPath,
-                    (outcome.finishedEarly ? "Partial export complete: " : "Export complete: ")
-                        + outputPath.filename().string(),
-                    TailText(outcome.log), 1.0, completedDuration,
-                    completedDuration, false
-                };
+                m_status.state = ExportState::Succeeded;
+                m_status.message = (outcome.finishedEarly
+                    ? "Partial export complete: " : "Export complete: ")
+                    + outputPath.filename().string();
+                m_status.progress = 1.0;
+                m_status.processedSeconds = completedDuration;
+                m_status.durationSeconds = completedDuration;
+                m_status.estimatedRemainingSeconds = 0.0;
+                if (m_status.framesPerSecond <= 0.0)
+                {
+                    const double elapsed = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - startedAt).count();
+                    if (elapsed > 0.0)
+                    {
+                        m_status.framesPerSecond = std::max(1LL, static_cast<long long>(
+                            std::ceil(completedDuration * frameRate - 0.000000001))) / elapsed;
+                    }
+                }
+                AppendStatusLog(m_status, "Export published successfully: "
+                    + outputPath.string() + "\n");
                 std::error_code sizeError;
                 const std::uintmax_t size = std::filesystem::file_size(outputPath, sizeError);
                 if (!sizeError && size <= std::numeric_limits<std::uint64_t>::max())
@@ -459,14 +558,14 @@ namespace weasel
         if (cancelledBeforePublish)
         {
             RemoveFileQuietly(stagingPath);
-            setCancelled(outcome.log);
+            setCancelled();
             return;
         }
         RemoveFileQuietly(stagingPath);
         std::lock_guard lock(m_mutex);
-        m_status = {
-            ExportState::Failed, outputPath,
-            "Export completed but could not be published.", commitError
-        };
+        m_status.state = ExportState::Failed;
+        m_status.message = "Export completed but could not be published.";
+        AppendStatusLog(m_status, "ERROR: Could not publish the MP4 output: "
+            + commitError + "\nTemporary output removed.\n");
     }
 }

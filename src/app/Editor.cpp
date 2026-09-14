@@ -1903,6 +1903,11 @@ namespace weasel
                         exportAsDialog();
                     }
                 }
+                if (!exportRunning && exportStatus.state != ExportState::Idle
+                    && ImGui::Button("View Last Export Details", ImVec2(-1.0f, 0.0f)))
+                {
+                    m_openEncodingWindowRequested = true;
+                }
 
                 ImGui::EndTabItem();
             }

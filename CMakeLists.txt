@@ -152,6 +152,7 @@ target_link_libraries(Weasel PRIVATE
     ImGui-SFML::ImGui-SFML
     nlohmann_json::nlohmann_json
     ${FFMPEG_LIBRARIES}
+    ZLIB::ZLIB
 )
 
 if(WIN32)
@@ -209,6 +210,9 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
         src/media/MediaDecoder.cpp
         src/media/PreviewFrameCache.cpp
         src/media/MediaProbe.cpp
+        src/project/ProjectData.cpp
+        src/render/RenderPreparation.cpp
+        src/render/SequenceRenderPlan.cpp
     )
     target_include_directories(WeaselFfmpegSmoke PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -217,7 +221,7 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
     target_link_directories(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LIBRARY_DIRS})
     target_compile_options(WeaselFfmpegSmoke PRIVATE ${FFMPEG_CFLAGS_OTHER})
     target_link_options(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LDFLAGS_OTHER})
-    target_link_libraries(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LIBRARIES})
+    target_link_libraries(WeaselFfmpegSmoke PRIVATE ${FFMPEG_LIBRARIES} ZLIB::ZLIB)
     if(MSVC)
         target_compile_options(WeaselFfmpegSmoke PRIVATE /W3)
     endif()
@@ -234,7 +238,7 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
     target_link_directories(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LIBRARY_DIRS})
     target_compile_options(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_CFLAGS_OTHER})
     target_link_options(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LDFLAGS_OTHER})
-    target_link_libraries(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LIBRARIES})
+    target_link_libraries(WeaselFfmpegBenchmark PRIVATE ${FFMPEG_LIBRARIES} ZLIB::ZLIB)
     if(MSVC)
         target_compile_options(WeaselFfmpegBenchmark PRIVATE /W3)
     endif()

@@ -200,14 +200,37 @@ namespace
         FramePtr          m_decodeFrame{ av_frame_alloc() };
         FramePtr          m_filterFrame{ av_frame_alloc() };
         PacketPtr         m_packet{ av_packet_alloc() };
+        weasel::FfmpegLogCallback m_onWarning;
+        std::string       m_sourceName;
         int               m_streamIndex = -1;
         AVRational        m_streamTimeBase{ 0, 1 };
         int               m_sourceRate = 0;
         bool              m_demuxEof = false;
         bool              m_decoderEof = false;
         bool              m_filterEof = false;
+        bool              m_packetPending = false;
+        int               m_invalidPacketCount = 0;
         std::vector<float> m_pending;
         std::size_t       m_pendingOffset = 0;
+
+        void warnInvalidPacket()
+        {
+            ++m_invalidPacketCount;
+            if (!m_onWarning || m_invalidPacketCount > 4)
+            {
+                return;
+            }
+            if (m_invalidPacketCount == 4)
+            {
+                m_onWarning("WARNING: Further malformed packets in audio '"
+                    + m_sourceName + "' will be skipped without repeating this warning.\n");
+            }
+            else
+            {
+                m_onWarning("WARNING: Skipping a malformed compressed audio packet in '"
+                    + m_sourceName + "'; a brief audio section may be missing.\n");
+            }
+        }
 
         bool feed(std::string& error)
         {
@@ -263,6 +286,30 @@ namespace
                     }
                 }
 
+                if (m_packetPending)
+                {
+                    const int send = avcodec_send_packet(m_decoder.get(), m_packet.get());
+                    if (send == AVERROR(EAGAIN))
+                    {
+                        // Receive the decoder's pending output, then retry this
+                        // same packet. Dropping it corrupts the compressed stream.
+                        continue;
+                    }
+                    av_packet_unref(m_packet.get());
+                    m_packetPending = false;
+                    if (send == AVERROR_INVALIDDATA)
+                    {
+                        warnInvalidPacket();
+                        continue;
+                    }
+                    if (send < 0)
+                    {
+                        error = "Could not submit compressed audio for decoding: " + AvError(send);
+                        return false;
+                    }
+                    continue;
+                }
+
                 if (!m_demuxEof)
                 {
                     int read = 0;
@@ -275,13 +322,7 @@ namespace
 
                     if (read >= 0)
                     {
-                        const int send = avcodec_send_packet(m_decoder.get(), m_packet.get());
-                        av_packet_unref(m_packet.get());
-                        if (send < 0 && send != AVERROR(EAGAIN))
-                        {
-                            error = "Could not submit compressed audio for decoding: " + AvError(send);
-                            return false;
-                        }
+                        m_packetPending = true;
                         continue;
                     }
                     if (read == AVERROR_EXIT && m_cancel
@@ -329,9 +370,12 @@ namespace
                   int outputRate,
                   int outputChannels,
                   std::atomic_bool& cancellation,
-                  std::string& error)
+                  std::string& error,
+                  weasel::FfmpegLogCallback onWarning = {})
         {
             m_cancel = &cancellation;
+            m_onWarning = std::move(onWarning);
+            m_sourceName = path.filename().string();
             AVFormatContext* rawFormat = avformat_alloc_context();
             if (!rawFormat)
             {
@@ -1403,6 +1447,7 @@ namespace weasel
         FramePtr         m_frame{ av_frame_alloc() };
         std::vector<std::unique_ptr<StreamingVideoDecoder>> m_decoders;
         std::vector<AVFilterContext*> m_sources;
+        std::vector<std::string> m_sourceNames;
         std::vector<bool> m_sourceEof;
         std::atomic_bool* m_cancel = nullptr;
         int              m_width = 0;
@@ -1415,6 +1460,7 @@ namespace weasel
             bool reachedEnd = false;
             if (!m_decoders[index]->nextFrame(decoded, reachedEnd, error))
             {
+                error = "Video input '" + m_sourceNames[index] + "': " + error;
                 return false;
             }
             if (reachedEnd)
@@ -1422,8 +1468,8 @@ namespace weasel
                 const int result = av_buffersrc_add_frame_flags(m_sources[index], nullptr, 0);
                 if (result < 0 && result != AVERROR_EOF)
                 {
-                    error = "Could not close a streaming video filter input: "
-                        + AvError(result);
+                    error = "Could not close video input '" + m_sourceNames[index]
+                        + "' in the filter graph: " + AvError(result);
                     return false;
                 }
                 m_sourceEof[index] = true;
@@ -1433,7 +1479,8 @@ namespace weasel
                 m_sources[index], const_cast<AVFrame*>(decoded), AV_BUFFERSRC_FLAG_KEEP_REF);
             if (result < 0)
             {
-                error = "Could not feed a streaming video filter input: " + AvError(result);
+                error = "Could not feed video input '" + m_sourceNames[index]
+                    + "' into the filter graph: " + AvError(result);
                 return false;
             }
             return true;
@@ -1516,12 +1563,12 @@ namespace weasel
                   int width,
                   int height,
                   double frameRate,
-                  double durationSeconds,
+                  std::int64_t frameCount,
                   std::string& error,
                   AVPixelFormat outputPixelFormat,
                   std::atomic_bool* cancelRequested)
         {
-            if (width <= 0 || height <= 0 || frameRate <= 0.0 || durationSeconds <= 0.0)
+            if (width <= 0 || height <= 0 || frameRate <= 0.0 || frameCount <= 0)
             {
                 error = "The streaming FFmpeg graph received an invalid output format.";
                 return false;
@@ -1562,9 +1609,11 @@ namespace weasel
 
             m_decoders.clear();
             m_sources.clear();
+            m_sourceNames.clear();
             m_sourceEof.assign(entries.size(), false);
             m_decoders.reserve(entries.size());
             m_sources.reserve(entries.size());
+            m_sourceNames.reserve(entries.size());
             for (std::size_t index = 0; index < entries.size(); ++index)
             {
                 auto decoder = std::make_unique<StreamingVideoDecoder>();
@@ -1594,6 +1643,7 @@ namespace weasel
                     return false;
                 }
                 m_sources.push_back(source);
+                m_sourceNames.push_back(entries[index].asset.path.filename().string());
                 m_decoders.push_back(std::move(decoder));
             }
 
@@ -1601,7 +1651,6 @@ namespace weasel
             graph.imbue(std::locale::classic());
             graph << "color=c=black:s=" << width << "x" << height
                   << ":r=" << Number(frameRate)
-                  << ":d=" << Number(durationSeconds)
                   << ",format=rgba[composite0];";
 
             for (std::size_t index = 0; index < entries.size(); ++index)
@@ -1650,8 +1699,11 @@ namespace weasel
                       << "," << Number(entry.clip.timelineEnd()) << ")'"
                       << "[composite" << (index + 1) << "];";
             }
+            // The exporter requests exactly frameCount frames. A time-based
+            // trim can round a fractional duration down by one frame in the
+            // filter time base, causing EOF on the final export frame.
             graph << "[composite" << entries.size() << "]"
-                  << "trim=duration=" << Number(durationSeconds)
+                  << "trim=end_frame=" << frameCount
                   << ",format=pix_fmts=" << outputFormatName << "[out]";
 
             AVFilterInOut* inputs = avfilter_inout_alloc();
@@ -1725,13 +1777,13 @@ namespace weasel
         int outputWidth,
         int outputHeight,
         double frameRate,
-        double durationSeconds,
+        std::int64_t frameCount,
         std::string& error,
         AVPixelFormat outputPixelFormat,
         std::atomic_bool* cancelRequested)
     {
         return m_impl->open(visualEntries, outputWidth, outputHeight,
-                            frameRate, durationSeconds, error, outputPixelFormat,
+                            frameRate, frameCount, error, outputPixelFormat,
                             cancelRequested);
     }
 
@@ -2249,6 +2301,19 @@ namespace weasel
                      clipIndex < m_audioClips.size(); ++clipIndex)
                 {
                     AudioClip& clip = m_audioClips[clipIndex];
+                    const auto silenceFailedClip = [this, &clip](std::string_view reason)
+                    {
+                        std::ostringstream warning;
+                        warning << std::fixed << std::setprecision(3)
+                                << "WARNING: Audio input '" << clip.entry.asset.path.string()
+                                << "' failed near timeline "
+                                << static_cast<double>(m_mixedSamples) / AudioSampleRate
+                                << " s: " << reason
+                                << ". The rest of this clip will be silent.\n";
+                        log(warning.str());
+                        clip.reader.reset();
+                        clip.exhausted = true;
+                    };
                     if (clip.startSample >= chunkEnd)
                     {
                         break;
@@ -2268,9 +2333,16 @@ namespace weasel
                                                AudioSampleRate,
                                                AudioChannels,
                                                *m_configuration.cancelRequested,
-                                               error))
+                                               error,
+                                               m_configuration.onLog))
                         {
-                            return false;
+                            if (cancelled())
+                            {
+                                return false;
+                            }
+                            silenceFailedClip(error);
+                            error.clear();
+                            continue;
                         }
                     }
                     const std::int64_t overlapStart = std::max(m_mixedSamples, clip.startSample);
@@ -2281,7 +2353,13 @@ namespace weasel
                                                              AudioChannels, error);
                     if (framesRead < 0)
                     {
-                        return false;
+                        if (cancelled())
+                        {
+                            return false;
+                        }
+                        silenceFailedClip(error);
+                        error.clear();
+                        continue;
                     }
                     for (int frame = 0; frame < framesRead; ++frame)
                     {
@@ -2365,6 +2443,30 @@ namespace weasel
                       {
                           return left.startSample < right.startSample;
                       });
+            {
+                std::ostringstream audioSummary;
+                audioSummary << "Audio mixer: " << m_audioClips.size() << " input clips"
+                             << (m_audioClips.empty() ? " (silence track).\n" : ".\n")
+                             << std::fixed << std::setprecision(3);
+                constexpr std::size_t MaximumListedAudioInputs = 20;
+                for (std::size_t index = 0;
+                     index < std::min(m_audioClips.size(), MaximumListedAudioInputs); ++index)
+                {
+                    const SequenceRenderEntry& entry = m_audioClips[index].entry;
+                    audioSummary << "  " << index + 1 << ". "
+                                 << entry.asset.path.filename().string()
+                                 << " | timeline " << entry.clip.timelineStart << '-'
+                                 << entry.clip.timelineEnd() << " s"
+                                 << " | source " << entry.clip.sourceIn << '-'
+                                 << entry.clip.sourceOut << " s\n";
+                }
+                if (m_audioClips.size() > MaximumListedAudioInputs)
+                {
+                    audioSummary << "  ... " << m_audioClips.size() - MaximumListedAudioInputs
+                                 << " additional audio inputs\n";
+                }
+                log(audioSummary.str());
+            }
 
             if (!(m_output->oformat->flags & AVFMT_NOFILE))
             {
@@ -2385,8 +2487,14 @@ namespace weasel
                 return false;
             }
             m_headerWritten = true;
-            log("Linked FFmpeg libraries initialized\nVideo encoder: " + m_encoderName
-                + "\nAudio encoder: " + std::string(m_audioCodec->codec->name) + "\n");
+            const char* pixelFormat = av_get_pix_fmt_name(m_videoCodec->pix_fmt);
+            log("Linked FFmpeg encoders and MP4 muxer initialized.\n"
+                "Selected video encoder: " + m_encoderName
+                + " (" + std::to_string(m_videoCodec->width) + "x"
+                + std::to_string(m_videoCodec->height) + ", pixel format "
+                + (pixelFormat ? pixelFormat : "unknown") + ")\n"
+                + "Selected audio encoder: " + std::string(m_audioCodec->codec->name)
+                + "; mixed audio clips: " + std::to_string(m_audioClips.size()) + "\n");
             error.clear();
             return true;
         }
@@ -2521,6 +2629,7 @@ namespace weasel
             const std::int64_t target = std::max<std::int64_t>(1,
                 static_cast<std::int64_t>(std::llround(renderedDurationSeconds
                                                       * AudioSampleRate)));
+            log("Finalization: mixing remaining audio samples...\n");
             if (!mixUntil(target, error))
             {
                 result.cancelled = cancelled();
@@ -2539,18 +2648,21 @@ namespace weasel
                     return result;
                 }
             }
+            log("Finalization: flushing audio and video encoders...\n");
             if (!writePackets(m_audioCodec.get(), m_audioStream, nullptr, error)
                 || !writePackets(m_videoCodec.get(), m_videoStream, nullptr, error))
             {
                 result.error = std::move(error);
                 return result;
             }
+            log("Finalization: writing MP4 trailer and fast-start metadata...\n");
             const int trailer = av_write_trailer(m_output.get());
             if (trailer < 0)
             {
                 result.error = "Could not finalize the export container: " + AvError(trailer);
                 return result;
             }
+            log("MP4 container finalized successfully.\n");
             result.succeeded = true;
             result.log = m_log;
             return result;

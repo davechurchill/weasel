@@ -12,6 +12,10 @@ namespace weasel
                                    SequenceRenderPlanOptions options)
     {
         plan.m_entries.clear();
+        if (options.skippedMedia)
+        {
+            options.skippedMedia->clear();
+        }
         error.clear();
 
         for (std::size_t trackIndex = 0; trackIndex < document.sequence().tracks.size(); ++trackIndex)
@@ -47,12 +51,32 @@ namespace weasel
                     continue;
                 }
 
-                if (options.validateMediaFiles)
+                if (options.validateMediaFiles || options.skipMissingMedia)
                 {
                     std::error_code filesystemError;
-                    if (!std::filesystem::exists(asset->path, filesystemError) || filesystemError)
+                    const bool mediaExists = std::filesystem::exists(asset->path, filesystemError);
+                    const bool missing = !mediaExists && (!filesystemError
+                        || filesystemError == std::errc::no_such_file_or_directory);
+                    if (missing && options.skipMissingMedia)
                     {
-                        error = "Media file is missing: " + asset->path.string();
+                        if (options.skippedMedia)
+                        {
+                            options.skippedMedia->push_back({
+                                asset->path, clip.id, entry.includeVideo, entry.includeAudio,
+                                clip.timelineStart, clip.timelineEnd()
+                            });
+                        }
+                        continue;
+                    }
+                    if (!mediaExists || filesystemError)
+                    {
+                        error = (filesystemError && !missing
+                            ? "Could not access media file: " : "Media file is missing: ")
+                            + asset->path.string();
+                        if (filesystemError && !missing)
+                        {
+                            error += " (" + filesystemError.message() + ")";
+                        }
                         return false;
                     }
                 }

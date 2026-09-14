@@ -14,6 +14,7 @@ namespace weasel
     struct PreparedSequenceRender
     {
         SequenceRenderPlan plan;
+        std::vector<SkippedMediaClip> skippedMedia;
         int                width = 0;
         int                height = 0;
         double             frameRate = 0.0;

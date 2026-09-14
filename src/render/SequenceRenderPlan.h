@@ -2,6 +2,7 @@
 
 #include "project/ProjectData.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -19,10 +20,22 @@ namespace weasel
         bool              includeAudio = false;
     };
 
+    struct SkippedMediaClip
+    {
+        std::filesystem::path path;
+        int                   clipId = 0;
+        bool                  video = false;
+        bool                  audio = false;
+        double                timelineStart = 0.0;
+        double                timelineEnd = 0.0;
+    };
+
     struct SequenceRenderPlanOptions
     {
         bool validateMediaFiles = true;
         bool validateLuts        = false;
+        bool skipMissingMedia    = false;
+        std::vector<SkippedMediaClip>* skippedMedia = nullptr;
     };
 
     class SequenceRenderPlan

@@ -90,7 +90,7 @@ namespace weasel
                   int outputWidth,
                   int outputHeight,
                   double frameRate,
-                  double durationSeconds,
+                  std::int64_t frameCount,
                   std::string& error,
                   AVPixelFormat outputPixelFormat = AV_PIX_FMT_RGBA,
                   std::atomic_bool* cancelRequested = nullptr);

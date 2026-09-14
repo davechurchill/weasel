@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -31,6 +33,10 @@ namespace weasel
             return result;
         }
         const PreparedSequenceRender& prepared = request.prepared;
+        if (callbacks.onLog)
+        {
+            callbacks.onLog("Shader Render: loading clip LUTs and opening the linked encoder...\n");
+        }
 
         std::unordered_map<std::string, CubeLutLoad> luts;
         for (const SequenceRenderEntry& entry : prepared.plan.entries())
@@ -71,6 +77,10 @@ namespace weasel
             result.error = "Could not activate an off-screen OpenGL export context.";
             return result;
         }
+        if (callbacks.onLog)
+        {
+            callbacks.onLog("Off-screen OpenGL context ready. Decoding and compositing video frames...\n");
+        }
 
         MediaDecoder decoder;
         VideoCompositor compositor;
@@ -82,7 +92,9 @@ namespace weasel
         sf::Image renderedFrame;
         auto nextPreviewFrameAt = std::chrono::steady_clock::now();
         bool failed = false;
+        long long encodedFrames = 0;
 
+        const auto framesStartedAt = std::chrono::steady_clock::now();
         for (long long frameIndex = 0; frameIndex < frameCount; ++frameIndex)
         {
             if (request.cancelRequested.load(std::memory_order_acquire))
@@ -131,6 +143,9 @@ namespace weasel
                                                                  result.error);
                 if (!decoded)
                 {
+                    result.error = "Clip '" + entry->asset.path.filename().string()
+                        + "' at output frame " + std::to_string(frameIndex + 1)
+                        + "/" + std::to_string(frameCount) + ": " + result.error;
                     failed = true;
                     break;
                 }
@@ -169,15 +184,22 @@ namespace weasel
                                    result.error, false)
                 || !compositor.copyToImage(renderedFrame, result.error))
             {
+                result.error = "GPU compositor at output frame "
+                    + std::to_string(frameIndex + 1) + "/" + std::to_string(frameCount)
+                    + ": " + result.error;
                 failed = true;
                 break;
             }
             if (!encoder.writeRgbaFrame(renderedFrame.getPixelsPtr(), prepared.width * 4,
                                         frameIndex, result.error))
             {
+                result.error = "Video encoder at output frame "
+                    + std::to_string(frameIndex + 1) + "/" + std::to_string(frameCount)
+                    + ": " + result.error;
                 failed = !request.cancelRequested.load(std::memory_order_acquire);
                 break;
             }
+            ++encodedFrames;
 
             result.renderedDuration = std::min(prepared.duration,
                 static_cast<double>(frameIndex + 1) / prepared.frameRate);
@@ -203,6 +225,18 @@ namespace weasel
             encoder.abort();
             result.cancelled = true;
             return result;
+        }
+        if (callbacks.onLog)
+        {
+            const double frameSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - framesStartedAt).count();
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(2)
+                    << "Rendered and encoded " << encodedFrames << " video frames in "
+                    << frameSeconds << " s ("
+                    << (frameSeconds > 0.0 ? encodedFrames / frameSeconds : 0.0)
+                    << " fps). Flushing audio/video and finalizing MP4...\n";
+            callbacks.onLog(message.str());
         }
         return CompleteRender(encoder.finish(std::max(1.0 / prepared.frameRate,
                                                       result.renderedDuration)),

@@ -91,7 +91,8 @@ namespace
                                            const weasel::AudioWaveform& waveform)
     {
         QuietnessPattern pattern;
-        if (waveform.peaks.empty() || waveform.durationSeconds <= 0.0)
+        if (waveform.peaks.empty() || waveform.durationSeconds <= 0.0
+            || !std::isfinite(waveform.secondsPerPeak) || waveform.secondsPerPeak <= 0.0)
         {
             return pattern;
         }
@@ -112,7 +113,7 @@ namespace
                 sourceStart + (static_cast<double>(index) + 0.5) * AudioAlignmentBinSeconds);
             const std::size_t peakIndex = std::min(waveform.peaks.size() - 1,
                 static_cast<std::size_t>(std::floor(std::max(0.0, sourceTime)
-                                                     / AudioAlignmentBinSeconds)));
+                                                     / waveform.secondsPerPeak)));
             const weasel::AudioWaveformPeak& peak = waveform.peaks[peakIndex];
             const double amplitude = std::max(std::abs(static_cast<double>(peak.minimum)),
                                               std::abs(static_cast<double>(peak.maximum)));
@@ -132,8 +133,17 @@ namespace
             smoothed[index] = sum / static_cast<double>(last - first + 1);
         }
 
-        const double low = Percentile(smoothed, 0.15);
-        const double high = Percentile(smoothed, 0.85);
+        double low = Percentile(smoothed, 0.15);
+        double high = Percentile(smoothed, 0.85);
+        if (high - low < 0.0001)
+        {
+            // A recording with long silence and a short audible passage can
+            // put both percentiles in the same state. Preserve that passage
+            // as a landmark; the run/transition checks still reject flicker.
+            const auto [minimum, maximum] = std::minmax_element(smoothed.begin(), smoothed.end());
+            low = *minimum;
+            high = *maximum;
+        }
         if (high - low < 0.0001)
         {
             return pattern;
@@ -265,7 +275,16 @@ namespace weasel
         {
             if (entry.second.size() > MaximumDescriptorOccurrences)
             {
-                entry.second.clear();
+                // Bound voting work without discarding every landmark in a
+                // recording whose speech/pause lengths commonly repeat.
+                std::vector<int> sampled;
+                sampled.reserve(MaximumDescriptorOccurrences);
+                for (std::size_t index = 0; index < MaximumDescriptorOccurrences; ++index)
+                {
+                    sampled.push_back(entry.second[index * (entry.second.size() - 1)
+                        / (MaximumDescriptorOccurrences - 1)]);
+                }
+                entry.second = std::move(sampled);
             }
         }
 
@@ -297,8 +316,11 @@ namespace weasel
             return std::abs(left.first) < std::abs(right.first);
         });
 
-        const std::size_t minimumOverlap = std::min({ PreferredAudioAlignmentOverlapBins,
-                                                       anchor.quiet.size(), moving.quiet.size() });
+        // Requiring the entire shorter clip to overlap makes every nonzero
+        // shift impossible for equal-length clips shorter than eight seconds.
+        const std::size_t minimumOverlap = std::max(MinimumAudioAlignmentBins,
+            std::min(PreferredAudioAlignmentOverlapBins,
+                     std::min(anchor.quiet.size(), moving.quiet.size()) / 2));
         double bestScore = -1.0;
         double bestTimelineStart = 0.0;
         std::unordered_set<int> testedOffsets;

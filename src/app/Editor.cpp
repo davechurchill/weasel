@@ -619,6 +619,11 @@ namespace weasel
         if (!m_pendingProjectLoad)
         {
             updateSequenceAudio();
+            if (m_uiState.waveformAlignment.isReady())
+            {
+                alignSelectedClipsByWaveform(m_uiState.waveformAlignment.anchorClipId,
+                                            m_uiState.waveformAlignment.movingClipId);
+            }
         }
         renderUI();
         if (!m_running)
@@ -1173,6 +1178,7 @@ namespace weasel
     void Editor::clearWaveformAlignment() noexcept
     {
         m_uiState.waveformAlignment.clear();
+        m_uiState.waveformAlignmentMessage.clear();
     }
 
     void Editor::startNewProject()
@@ -2778,6 +2784,11 @@ namespace weasel
         {
             clearWaveformAlignment();
         };
+        const auto finishAlignment = [this](const char* message)
+        {
+            clearWaveformAlignment();
+            m_uiState.waveformAlignmentMessage = message;
+        };
 
         // Keep extraction opt-in: this action becomes available only after
         // waveform drawing has been enabled in the Sequence tab.
@@ -2823,33 +2834,25 @@ namespace weasel
         // source-tile request before inspecting readiness so a previously
         // completed waveform for a smaller range is not mistaken for complete
         // coverage of these two clips.
-        (void)m_sequenceAudioController.requestWaveform(m_editorState.project(), anchorAsset->id);
-        (void)m_sequenceAudioController.requestWaveform(m_editorState.project(), movingAsset->id);
+        const bool anchorRequested = m_sequenceAudioController.requestWaveform(m_editorState.project(), anchorAsset->id);
+        const bool movingRequested = m_sequenceAudioController.requestWaveform(m_editorState.project(), movingAsset->id);
         AudioWaveformSnapshot anchorSnapshot = m_sequenceAudioController.waveformSnapshot(anchorAsset->id);
         AudioWaveformSnapshot movingSnapshot = m_sequenceAudioController.waveformSnapshot(movingAsset->id);
-        const auto queueMissingWaveform = [this](const MediaAsset& asset, const AudioWaveformSnapshot& snapshot)
-        {
-            if (snapshot.status.state != AudioWaveformState::Ready
-                && snapshot.status.state != AudioWaveformState::Failed)
-            {
-                (void)m_sequenceAudioController.requestWaveform(m_editorState.project(), asset.id);
-            }
-        };
 
         const bool anchorReady = anchorSnapshot.status.state == AudioWaveformState::Ready && anchorSnapshot.waveform;
         const bool movingReady = movingSnapshot.status.state == AudioWaveformState::Ready && movingSnapshot.waveform;
         if (!anchorReady || !movingReady)
         {
-            if (anchorSnapshot.status.state == AudioWaveformState::Failed
+            if (!anchorRequested || !movingRequested
+                || anchorSnapshot.status.state == AudioWaveformState::Failed
                 || movingSnapshot.status.state == AudioWaveformState::Failed)
             {
-                clearPendingAlignment();
+                finishAlignment("Could not generate the waveforms needed for alignment.");
                 return;
             }
-            queueMissingWaveform(*anchorAsset, anchorSnapshot);
-            queueMissingWaveform(*movingAsset, movingSnapshot);
             m_uiState.waveformAlignment.anchorClipId = anchorClipId;
             m_uiState.waveformAlignment.movingClipId = movingClipId;
+            m_uiState.waveformAlignmentMessage = "Waiting for waveforms...";
             return;
         }
 
@@ -2857,7 +2860,12 @@ namespace weasel
             *anchorClip, *anchorSnapshot.waveform, *movingClip, *movingSnapshot.waveform);
         if (!alignedTimelineStart)
         {
-            clearPendingAlignment();
+            finishAlignment("No reliable alignment found. The clips need shared audio with distinct pauses and a match within the timeline.");
+            return;
+        }
+        if (std::abs(movingClip->timelineStart - *alignedTimelineStart) <= 0.000001)
+        {
+            finishAlignment("The clips are already aligned.");
             return;
         }
 
@@ -2867,14 +2875,14 @@ namespace weasel
             || !m_project.moveClip(movingClipId, movingTrack, *alignedTimelineStart))
         {
             commitSequenceUndoTransaction();
-            clearPendingAlignment();
+            finishAlignment("Could not move the clip to the aligned position.");
             return;
         }
 
         m_playing = false;
         invalidatePreview();
         commitSequenceUndoTransaction();
-        clearPendingAlignment();
+        finishAlignment("Waveforms aligned. Moved the second selected clip.");
     }
 
     bool Editor::deleteSelectedClip()

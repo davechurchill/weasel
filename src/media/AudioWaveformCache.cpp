@@ -28,7 +28,7 @@ namespace
     // audio. The cap still guards corrupt duration metadata from huge allocs.
     constexpr std::size_t MaximumPeakCount = 2097152;
     constexpr std::array<char, 8> WaveformCacheMagic = { 'V', 'I', 'D', 'W', 'A', 'V', 'E', '1' };
-    constexpr std::uint32_t WaveformCacheVersion = 2;
+    constexpr std::uint32_t WaveformCacheVersion = 3;
     constexpr double WaveformCacheDurationTolerance = 0.01;
 
     std::size_t DefaultPeakCountForDuration(double durationSeconds)

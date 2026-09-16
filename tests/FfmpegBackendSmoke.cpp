@@ -134,6 +134,8 @@ namespace
     }
 }
 
+bool RunAudioTimingRegression(const std::filesystem::path& directory, std::string& error);
+
 int main(int argc, char** argv)
 {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
@@ -143,6 +145,11 @@ int main(int argc, char** argv)
     if (filesystemError)
     {
         return Fail("temporary directory", filesystemError.message());
+    }
+    std::string timingError;
+    if (!RunAudioTimingRegression(directory, timingError))
+    {
+        return Fail("audio timing regression", timingError);
     }
     const std::filesystem::path input = directory / "input.wav";
     const std::filesystem::path imageInput = directory / "input.ppm";

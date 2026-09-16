@@ -62,6 +62,7 @@ namespace weasel
     {
         TimelinePresentationState timeline;
         WaveformAlignmentRequest  waveformAlignment;
+        std::string               waveformAlignmentMessage;
         int                       batchImageDurationMs = 4000;
         bool                      monitorPlayheadSliderActive = false;
         UiTheme                   theme = UiTheme::MidnightBlue;
@@ -69,6 +70,7 @@ namespace weasel
         void resetForProjectChange() noexcept
         {
             waveformAlignment.clear();
+            waveformAlignmentMessage.clear();
             monitorPlayheadSliderActive = false;
             timeline.draggingPlayhead = false;
         }

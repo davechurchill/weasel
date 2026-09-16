@@ -361,21 +361,6 @@ namespace weasel
             const bool hasExactlyTwoSelectedClips = selectedClipIds.size() == 2;
             const int alignmentAnchorId = hasExactlyTwoSelectedClips ? selectedClipIds.front() : -1;
             const int alignmentMovingId = hasExactlyTwoSelectedClips ? selectedClipIds.back() : -1;
-            if (drawAudioWaveforms && alignmentRequest.isReady())
-            {
-                if (!hasExactlyTwoSelectedClips
-                    || alignmentRequest.anchorClipId != alignmentAnchorId
-                    || alignmentRequest.movingClipId != alignmentMovingId)
-                {
-                    alignmentRequest.clear();
-                }
-                else
-                {
-                    editor.alignSelectedClipsByWaveform(
-                        alignmentRequest.anchorClipId, alignmentRequest.movingClipId);
-                }
-            }
-
             const TimelineClip* alignmentAnchor = project.findClip(alignmentAnchorId);
             const TimelineClip* alignmentMoving = project.findClip(alignmentMovingId);
             const MediaAsset* alignmentAnchorAsset = alignmentAnchor
@@ -400,6 +385,10 @@ namespace weasel
                     alignmentRequest.anchorClipId, alignmentRequest.movingClipId);
             }
             ImGui::EndDisabled();
+            if (!editor.m_uiState.waveformAlignmentMessage.empty())
+            {
+                ImGui::TextWrapped("%s", editor.m_uiState.waveformAlignmentMessage.c_str());
+            }
             if (drawAudioWaveforms && !hasExactlyTwoSelectedClips)
             {
                 ImGui::TextDisabled("Select exactly two clips to align their waveforms.");
@@ -416,7 +405,7 @@ namespace weasel
                 sequenceAudio->setDrawAudioWaveforms(waveformEnabled);
                 if (!waveformEnabled)
                 {
-                    alignmentRequest.clear();
+                    editor.clearWaveformAlignment();
                 }
             }
 

@@ -37,7 +37,7 @@ namespace
     constexpr unsigned int ClipAudioChannelCount = 2;
     constexpr unsigned int ClipAudioSampleRate = 48000;
     constexpr std::uint64_t MixerChunkFrames = 2048;
-    constexpr std::size_t ClipAudioCacheFormatVersion = 1;
+    constexpr std::size_t ClipAudioCacheFormatVersion = 2;
 
     bool IsNumberedCacheFilename(std::string_view filename, std::string_view prefix)
     {
@@ -959,10 +959,8 @@ namespace weasel
         std::vector<AudioWaveformRange> sourceRanges;
         for (const TimelineTrack& track : document.sequence().tracks)
         {
-            if (track.type != TimelineTrackType::Audio)
-            {
-                continue;
-            }
+            // Alignment also accepts video clips whose linked audio was
+            // removed or trimmed independently. Include their source ranges.
             for (const TimelineClip& clip : track.clips)
             {
                 if (clip.assetId == assetId && clip.sourceOut > clip.sourceIn)
@@ -996,6 +994,7 @@ namespace weasel
         {
             MediaAsset                      asset;
             std::vector<AudioWaveformRange> sourceRanges;
+            bool                            hasAudioTrack = false;
         };
 
         std::vector<int> assetIds;
@@ -1003,10 +1002,6 @@ namespace weasel
         std::unordered_map<int, std::size_t> requestIndices;
         for (const TimelineTrack& track : document.sequence().tracks)
         {
-            if (track.type != TimelineTrackType::Audio)
-            {
-                continue;
-            }
             for (const TimelineClip& clip : track.clips)
             {
                 const MediaAsset* asset = document.findAsset(clip.assetId);
@@ -1019,9 +1014,9 @@ namespace weasel
                     asset->id, requests.size());
                 if (inserted)
                 {
-                    assetIds.push_back(asset->id);
                     requests.push_back({ *asset, {} });
                 }
+                requests[found->second].hasAudioTrack |= track.type == TimelineTrackType::Audio;
                 requests[found->second].sourceRanges.push_back({
                     clip.sourceIn, clip.sourceOut
                 });
@@ -1029,7 +1024,11 @@ namespace weasel
         }
         for (const AssetRequest& request : requests)
         {
-            (void)requestWaveform(request.asset, request.sourceRanges);
+            if (request.hasAudioTrack)
+            {
+                assetIds.push_back(request.asset.id);
+                (void)requestWaveform(request.asset, request.sourceRanges);
+            }
         }
         return assetIds;
     }

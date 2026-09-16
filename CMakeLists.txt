@@ -206,6 +206,7 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
     enable_testing()
     add_executable(WeaselFfmpegSmoke
         tests/FfmpegBackendSmoke.cpp
+        tests/AudioTimingRegression.cpp
         src/media/FfmpegBackend.cpp
         src/media/MediaDecoder.cpp
         src/media/PreviewFrameCache.cpp
@@ -213,6 +214,7 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
         src/project/ProjectData.cpp
         src/render/RenderPreparation.cpp
         src/render/SequenceRenderPlan.cpp
+        src/timeline/WaveformAlignment.cpp
     )
     target_include_directories(WeaselFfmpegSmoke PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"

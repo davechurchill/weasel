@@ -204,6 +204,7 @@ namespace
         std::string       m_sourceName;
         int               m_streamIndex = -1;
         AVRational        m_streamTimeBase{ 0, 1 };
+        std::int64_t      m_streamOrigin = 0;
         int               m_sourceRate = 0;
         bool              m_demuxEof = false;
         bool              m_decoderEof = false;
@@ -254,10 +255,7 @@ namespace
                         }
                         if (timestamp != AV_NOPTS_VALUE)
                         {
-                            const AVStream* stream = m_format->streams[m_streamIndex];
-                            const std::int64_t startTimestamp = stream->start_time == AV_NOPTS_VALUE
-                                ? 0 : stream->start_time;
-                            m_decodeFrame->pts = av_rescale_q(timestamp - startTimestamp,
+                            m_decodeFrame->pts = av_rescale_q(timestamp - m_streamOrigin,
                                                               m_streamTimeBase,
                                                               AVRational{ 1, m_sourceRate });
                         }
@@ -396,8 +394,13 @@ namespace
             m_streamIndex = av_find_best_stream(m_format.get(), AVMEDIA_TYPE_AUDIO, -1, -1,
                                                 &decoder, 0);
             if (m_streamIndex < 0 || !decoder
-                || m_format->streams[m_streamIndex]->codecpar->sample_rate <= 0)
+                || m_format->streams[m_streamIndex]->codecpar->sample_rate <= 0
+                || m_format->streams[m_streamIndex]->start_time == AV_NOPTS_VALUE)
             {
+                // Containers such as Matroska may expose the codec in their
+                // header but discover the timestamp origin only by reading
+                // packets. Establish it before seeking, or a trimmed decode
+                // can use a different source clock than an untrimmed decode.
                 result = avformat_find_stream_info(m_format.get(), nullptr);
                 if (result < 0)
                 {
@@ -414,6 +417,7 @@ namespace
             }
             AVStream* stream = m_format->streams[m_streamIndex];
             m_streamTimeBase = stream->time_base;
+            m_streamOrigin = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
             m_decoder.reset(avcodec_alloc_context3(decoder));
             if (!m_decoder)
             {
@@ -428,9 +432,7 @@ namespace
             }
             m_sourceRate = std::max(1, m_decoder->sample_rate);
 
-            const std::int64_t streamStart = stream->start_time == AV_NOPTS_VALUE
-                ? 0 : stream->start_time;
-            const std::int64_t seekTimestamp = streamStart + av_rescale_q(
+            const std::int64_t seekTimestamp = m_streamOrigin + av_rescale_q(
                 static_cast<std::int64_t>(std::floor(std::max(0.0, sourceStart) * AV_TIME_BASE)),
                 AV_TIME_BASE_Q, stream->time_base);
             if (sourceStart > 0.0)

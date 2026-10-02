@@ -207,8 +207,10 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
     add_executable(WeaselFfmpegSmoke
         tests/FfmpegBackendSmoke.cpp
         tests/AudioTimingRegression.cpp
+        tests/MediaRecoveryRegression.cpp
         src/media/FfmpegBackend.cpp
         src/media/MediaDecoder.cpp
+        src/media/MediaImportController.cpp
         src/media/PreviewFrameCache.cpp
         src/media/MediaProbe.cpp
         src/project/ProjectData.cpp

@@ -108,6 +108,93 @@ namespace
     using SwrPtr = std::unique_ptr<SwrContext, SwrDeleter>;
     using AudioFifoPtr = std::unique_ptr<AVAudioFifo, AudioFifoDeleter>;
 
+    bool RecoverMediaDuration(AVFormatContext* format, double& durationSeconds,
+                              std::string& error)
+    {
+        PacketPtr packet(av_packet_alloc());
+        if (!packet)
+        {
+            error = "Could not allocate the FFmpeg duration reader.";
+            return false;
+        }
+
+        // An interrupted recording may have complete media packets but no
+        // finalized duration metadata. Read their timestamps without decoding
+        // or rewriting the source. find_stream_info preserves buffered packets.
+        std::vector<double> firstTimestamps(format->nb_streams,
+                                             std::numeric_limits<double>::infinity());
+        std::vector<double> endTimestamps(format->nb_streams,
+                                           -std::numeric_limits<double>::infinity());
+        int result = 0;
+        while ((result = av_read_frame(format, packet.get())) >= 0)
+        {
+            AVStream* stream = format->streams[packet->stream_index];
+            AVCodecParameters* parameters = stream->codecpar;
+            const bool timedVideo = parameters->codec_type == AVMEDIA_TYPE_VIDEO
+                && !(stream->disposition & AV_DISPOSITION_ATTACHED_PIC);
+            const std::int64_t timestamp = packet->pts != AV_NOPTS_VALUE
+                ? packet->pts : packet->dts;
+            if ((timedVideo || parameters->codec_type == AVMEDIA_TYPE_AUDIO)
+                && timestamp != AV_NOPTS_VALUE
+                && stream->time_base.num > 0 && stream->time_base.den > 0)
+            {
+                const double timeBase = av_q2d(stream->time_base);
+                double packetSeconds = std::max<std::int64_t>(0, packet->duration) * timeBase;
+                if (packetSeconds <= 0.0 && timedVideo)
+                {
+                    const AVRational rate = av_guess_frame_rate(format, stream, nullptr);
+                    if (rate.num > 0 && rate.den > 0)
+                    {
+                        packetSeconds = av_q2d(av_inv_q(rate));
+                    }
+                }
+                else if (packetSeconds <= 0.0 && parameters->sample_rate > 0)
+                {
+                    packetSeconds = static_cast<double>(std::max(0,
+                        av_get_audio_frame_duration2(parameters, packet->size)))
+                        / parameters->sample_rate;
+                }
+                const double timestampSeconds = static_cast<double>(timestamp) * timeBase;
+                const double endSeconds = timestampSeconds + packetSeconds;
+                if (std::isfinite(endSeconds))
+                {
+                    // B-frames can arrive out of presentation order, so the
+                    // last packet does not necessarily have the latest end.
+                    firstTimestamps[packet->stream_index] = std::min(
+                        firstTimestamps[packet->stream_index], timestampSeconds);
+                    endTimestamps[packet->stream_index] = std::max(
+                        endTimestamps[packet->stream_index], endSeconds);
+                }
+            }
+            av_packet_unref(packet.get());
+        }
+
+        for (unsigned int index = 0; index < format->nb_streams; ++index)
+        {
+            if (std::isfinite(endTimestamps[index]))
+            {
+                const AVStream* stream = format->streams[index];
+                // Short interrupted streams may also lack a reported start.
+                // Use their earliest timestamp rather than assuming zero.
+                const double origin = stream->start_time == AV_NOPTS_VALUE
+                    ? firstTimestamps[index]
+                    : static_cast<double>(stream->start_time) * av_q2d(stream->time_base);
+                durationSeconds = std::max(durationSeconds, endTimestamps[index] - origin);
+            }
+        }
+
+        // Keep the recovered prefix when the final block was cut off during
+        // recording. Other read failures still need to be reported.
+        if (result != AVERROR_EOF
+            && !(result == AVERROR_INVALIDDATA && format->pb && avio_feof(format->pb)
+                 && durationSeconds > 0.0))
+        {
+            error = "FFmpeg could not recover the media duration: " + AvError(result);
+            return false;
+        }
+        return true;
+    }
+
     void AppendSpeedFilters(std::ostringstream& filters, const weasel::TimelineClip& clip)
     {
         if (clip.isReversed())
@@ -1362,6 +1449,11 @@ namespace weasel
         if (!info.hasVideo && !info.hasAudio)
         {
             error = "FFmpeg did not find a readable audio or video stream.";
+            return false;
+        }
+        if (info.durationSeconds <= 0.0
+            && !RecoverMediaDuration(format.get(), info.durationSeconds, error))
+        {
             return false;
         }
         if (info.videoBitrateKbps == 0 && info.hasVideo && !info.hasAudio

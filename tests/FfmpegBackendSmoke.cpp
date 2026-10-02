@@ -135,9 +135,28 @@ namespace
 }
 
 bool RunAudioTimingRegression(const std::filesystem::path& directory, std::string& error);
+bool RunMediaRecoveryRegression(const std::filesystem::path& inputVideo,
+                                const std::filesystem::path& directory,
+                                std::string& error);
 
 int main(int argc, char** argv)
 {
+    if (argc > 2 && std::string_view(argv[1]) == "--probe-video")
+    {
+        for (int index = 2; index < argc; ++index)
+        {
+            weasel::MediaAsset asset;
+            std::string error;
+            if (!weasel::MediaProbe::probe(argv[index], asset, error, weasel::MediaKind::Video)
+                || asset.kind != weasel::MediaKind::Video || asset.duration <= 0.0)
+            {
+                return Fail("supplied-video probe", error.empty() ? "expected a video asset" : error);
+            }
+            std::cout << asset.name << ": video, " << asset.duration << " seconds, "
+                      << asset.fps << " fps, audio=" << asset.hasAudio << '\n';
+        }
+        return 0;
+    }
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / "weasel-ffmpeg-smoke";
     std::error_code filesystemError;
@@ -477,6 +496,10 @@ int main(int argc, char** argv)
         || !outputInfo.hasVideo || !outputInfo.hasAudio)
     {
         return Fail("output probe", error);
+    }
+    if (!RunMediaRecoveryRegression(videoOutput, directory, error))
+    {
+        return Fail("media recovery regression", error);
     }
     weasel::MediaDecoder decoder;
     weasel::MediaDecodeRequest decodeRequest;

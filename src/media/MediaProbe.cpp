@@ -128,10 +128,10 @@ namespace weasel
             probeError = "FFmpeg did not find a usable stream with a duration.";
         }
 
-        // Some image demuxers do not report a useful duration. Confirm that
-        // an unclassified video stream can produce a frame, then treat it as
-        // a still with the editor's default image duration.
-        if ((!expectedKind || *expectedKind != MediaKind::Audio)
+        // Some image demuxers do not report a useful duration. Only use the
+        // still-image fallback for image inputs; a video with missing timing
+        // must never become a four-second still with its audio disabled.
+        if ((imageWasExpected || imageWasClassified)
             && mediaInfo.hasVideo && mediaInfo.width > 0 && mediaInfo.height > 0)
         {
             MediaDecoder decoder(1);

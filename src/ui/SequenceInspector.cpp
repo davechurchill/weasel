@@ -357,7 +357,7 @@ namespace weasel
         {
             const bool drawAudioWaveforms = sequenceAudio->drawAudioWaveforms();
             WaveformAlignmentRequest& alignmentRequest = editor.m_uiState.waveformAlignment;
-            const std::vector<int>& selectedClipIds = editor.m_timelineController.selectedClipIds();
+            const std::vector<int> selectedClipIds = editor.m_timelineController.selectedClipGroupIds();
             const bool hasExactlyTwoSelectedClips = selectedClipIds.size() == 2;
             const int alignmentAnchorId = hasExactlyTwoSelectedClips ? selectedClipIds.front() : -1;
             const int alignmentMovingId = hasExactlyTwoSelectedClips ? selectedClipIds.back() : -1;

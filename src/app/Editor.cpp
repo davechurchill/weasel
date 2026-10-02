@@ -2798,7 +2798,7 @@ namespace weasel
             return;
         }
 
-        const std::vector<int>& selectedClipIds = m_timelineController.selectedClipIds();
+        const std::vector<int> selectedClipIds = m_timelineController.selectedClipGroupIds();
         if (selectedClipIds.size() != 2
             || selectedClipIds.front() != anchorClipId
             || selectedClipIds.back() != movingClipId)

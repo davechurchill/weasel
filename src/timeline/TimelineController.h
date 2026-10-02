@@ -132,6 +132,7 @@ namespace weasel
                                                           const SnapSettings& snapping,
                                                           const std::vector<int>& ignoredClipIds) const;
         std::vector<int> collectValidAssetIds(const std::vector<int>& assetIds) const;
+        int linkedClipIdForSelection(int clipId) const;
         std::vector<int> collectValidClipIds(const std::vector<int>& clipIds) const;
         std::vector<int> validSelectedAssetIds() const;
         std::vector<int> validSelectedClipIds() const;
@@ -154,6 +155,9 @@ namespace weasel
         const std::vector<int>& selectedAssetIds() const noexcept;
         bool isAssetSelected(int assetId) const;
         const std::vector<int>& selectedClipIds() const noexcept;
+        // One representative per linked pair or unlinked clip, in selection
+        // order. Each pair is represented by its first selected member.
+        std::vector<int> selectedClipGroupIds() const;
         bool isClipSelected(int clipId) const;
         bool selectAsset(int assetId);
         // Ctrl-click selection: add an unselected asset or remove a selected
@@ -165,12 +169,15 @@ namespace weasel
         // Select every asset in media-bin order while retaining the current
         // active asset as the primary selection when possible.
         bool selectAllAssets();
+        // Select the clicked clip and its reciprocal linked counterpart,
+        // keeping the clicked member active for single-clip consumers.
         bool selectClip(int clipId);
-        // Ctrl-click selection: add an unselected clip or remove a selected
-        // clip without disturbing the order of the remaining selection.
+        // Ctrl-click selection: add or remove the complete linked pair
+        // without disturbing the order of the remaining selection.
         bool toggleClipSelection(int clipId);
         // Shift-click selection: add every clip whose start lies between the
-        // leftmost selected clip and the target (inclusive), across tracks.
+        // leftmost selected clip and the target (inclusive), across tracks,
+        // including the linked counterpart of every added clip.
         bool selectClipRange(int clipId);
         // Select every clip in the timeline while retaining the current
         // active clip as the primary selection when possible.

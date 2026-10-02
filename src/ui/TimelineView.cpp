@@ -152,11 +152,8 @@ namespace
         ImU32 disabledClip = 0;
         ImU32 waveform = 0;
         ImU32 disabledWaveform = 0;
-        ImU32 primarySelection = 0;
-        ImU32 secondarySelection = 0;
+        ImU32 selectedClipBorder = 0;
         ImU32 clipBorder = 0;
-        ImU32 trimHandle = 0;
-        ImU32 selectedTrimHandle = 0;
         ImU32 playhead = 0;
     };
 
@@ -184,11 +181,8 @@ namespace
         palette.disabledClip = DarkenedStyleColour(ImGuiCol_Button, 0.72f);
         palette.waveform = StyleColour(ImGuiCol_Text, 0.55f);
         palette.disabledWaveform = StyleColour(ImGuiCol_TextDisabled, 0.55f);
-        palette.primarySelection = StyleColour(ImGuiCol_HeaderActive);
-        palette.secondarySelection = IM_COL32(246, 196, 76, 255);
+        palette.selectedClipBorder = IM_COL32(255, 255, 255, 255);
         palette.clipBorder = StyleColour(ImGuiCol_Border);
-        palette.trimHandle = StyleColour(ImGuiCol_Text, 0.25f);
-        palette.selectedTrimHandle = StyleColour(ImGuiCol_Text, 0.45f);
         palette.playhead = IM_COL32(232, 17, 35, 255);
         return palette;
     }
@@ -686,9 +680,41 @@ namespace weasel
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
 
-            if (!presentation.draggingPlayhead && !timeline.dragActive() && canvasHovered
+            const bool timelineBackgroundHovered = ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered();
+            if (!presentation.draggingPlayhead && !timeline.dragActive() && (canvasHovered || timelineBackgroundHovered)
                 && !trackToggleHovered && !trackToggleClicked && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
+                TimelineClip* hitClip = nullptr;
+                int hitTrack = -1;
+                TimelineController::DragMode hitMode = TimelineController::DragMode::Move;
+                for (int trackIndex = static_cast<int>(project.sequence().tracks.size()) - 1; trackIndex >= 0 && !hitClip; --trackIndex)
+                {
+                    TimelineTrack& track = project.sequence().tracks[static_cast<std::size_t>(trackIndex)];
+                    const float rowHeight = TimelineRowHeight(track, layerHeights);
+                    for (auto clip = track.clips.rbegin(); clip != track.clips.rend(); ++clip)
+                    {
+                        const float x = originX + static_cast<float>(clip->timelineStart) * presentation.pixelsPerSecond;
+                        const float y = TimelineRowY(project.sequence(), static_cast<std::size_t>(trackIndex), rowsY, layerHeights)
+                            + (track.type == TimelineTrackType::Audio ? 4.0f : 7.0f);
+                        const float width = std::max(18.0f, static_cast<float>(clip->duration()) * presentation.pixelsPerSecond);
+                        const float height = rowHeight - (track.type == TimelineTrackType::Audio ? 8.0f : 14.0f);
+                        if (mouse.x >= x && mouse.x <= x + width && mouse.y >= y && mouse.y <= y + height)
+                        {
+                            hitClip = &*clip;
+                            hitTrack = trackIndex;
+                            hitMode = mouse.x - x < TrimHandleWidth ? TimelineController::DragMode::TrimStart
+                                : (x + width - mouse.x < TrimHandleWidth ? TimelineController::DragMode::TrimEnd : TimelineController::DragMode::Move);
+                            break;
+                        }
+                    }
+                }
+
+                if (!hitClip)
+                {
+                    timeline.clearClipSelection();
+                    editor.clearWaveformAlignment();
+                }
+
                 if (playheadHovered || inRuler)
                 {
                     editor.endTimelineDrag();
@@ -697,31 +723,6 @@ namespace weasel
                 }
                 else
                 {
-                    TimelineClip* hitClip = nullptr;
-                    int hitTrack = -1;
-                    TimelineController::DragMode hitMode = TimelineController::DragMode::Move;
-                    for (int trackIndex = static_cast<int>(project.sequence().tracks.size()) - 1; trackIndex >= 0 && !hitClip; --trackIndex)
-                    {
-                        TimelineTrack& track = project.sequence().tracks[static_cast<std::size_t>(trackIndex)];
-                        const float rowHeight = TimelineRowHeight(track, layerHeights);
-                        for (auto clip = track.clips.rbegin(); clip != track.clips.rend(); ++clip)
-                        {
-                            const float x = originX + static_cast<float>(clip->timelineStart) * presentation.pixelsPerSecond;
-                            const float y = TimelineRowY(project.sequence(), static_cast<std::size_t>(trackIndex), rowsY, layerHeights)
-                                + (track.type == TimelineTrackType::Audio ? 4.0f : 7.0f);
-                            const float width = std::max(18.0f, static_cast<float>(clip->duration()) * presentation.pixelsPerSecond);
-                            const float height = rowHeight - (track.type == TimelineTrackType::Audio ? 8.0f : 14.0f);
-                            if (mouse.x >= x && mouse.x <= x + width && mouse.y >= y && mouse.y <= y + height)
-                            {
-                                hitClip = &*clip;
-                                hitTrack = trackIndex;
-                                hitMode = mouse.x - x < TrimHandleWidth ? TimelineController::DragMode::TrimStart
-                                    : (x + width - mouse.x < TrimHandleWidth ? TimelineController::DragMode::TrimEnd : TimelineController::DragMode::Move);
-                                break;
-                            }
-                        }
-                    }
-
                     const double mouseTime = std::max(0.0,
                         static_cast<double>((mouse.x - originX) / presentation.pixelsPerSecond));
                     if (hitClip)
@@ -766,7 +767,7 @@ namespace weasel
                         {
                             const bool preserveMultiSelection = hitMode == TimelineController::DragMode::Move
                                 && timeline.isClipSelected(hitClipId)
-                                && timeline.selectedClipIds().size() > 1;
+                                && timeline.selectedClipGroupIds().size() > 1;
                             if (!preserveMultiSelection)
                             {
                                 (void)timeline.selectClip(hitClipId);
@@ -809,7 +810,6 @@ namespace weasel
                     const float x = originX + static_cast<float>(clip.timelineStart) * presentation.pixelsPerSecond;
                     const float width = std::max(18.0f, static_cast<float>(duration) * presentation.pixelsPerSecond);
                     const MediaAsset* asset = project.findAsset(clip.assetId);
-                    const bool primarySelected = clip.id == timeline.selection().clipId;
                     const bool selected = timeline.isClipSelected(clip.id);
                     const bool audioTrack = track.type == TimelineTrackType::Audio;
                     ImU32 audioFill = IM_COL32(45, 143, 119, 255);
@@ -823,7 +823,9 @@ namespace weasel
                     const ImU32 fill = audioTrack
                         ? (track.enabled ? audioFill : palette.disabledClip)
                         : (track.enabled ? AssetColour(clip.assetId) : palette.disabledClip);
-                    drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), fill, 3.0f);
+                    const ImVec2 clipMinimum(std::round(x), std::round(y));
+                    const ImVec2 clipMaximum(std::round(x + width), std::round(y + height));
+                    drawList->AddRectFilled(clipMinimum, clipMaximum, fill);
                     if (audioTrack && sequenceAudio.drawAudioWaveforms()
                         && asset && asset->hasAudio)
                     {
@@ -848,14 +850,6 @@ namespace weasel
                                                       track.enabled ? palette.waveform : palette.disabledWaveform);
                         }
                     }
-                    drawList->AddRect(ImVec2(x, y), ImVec2(x + width, y + height),
-                                      primarySelected ? palette.primarySelection
-                                          : (selected ? palette.secondarySelection : palette.clipBorder),
-                                      3.0f, 0, selected ? 2.0f : 1.0f);
-                    const ImU32 trimHandle = selected ? palette.selectedTrimHandle : palette.trimHandle;
-                    drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + TrimHandleWidth, y + height), trimHandle, 2.0f);
-                    drawList->AddRectFilled(ImVec2(x + width - TrimHandleWidth, y), ImVec2(x + width, y + height), trimHandle, 2.0f);
-
                     drawList->PushClipRect(ImVec2(x + TrimHandleWidth + 4.0f, y + 2.0f), ImVec2(x + width - TrimHandleWidth - 3.0f, y + height - 2.0f), true);
                     const std::string label = asset ? asset->name : "Missing media";
                     if (audioTrack)
@@ -869,6 +863,19 @@ namespace weasel
                         drawList->AddText(ImVec2(x + TrimHandleWidth + 5.0f, y + 26.0f), IM_COL32(225, 236, 252, 205), durationLabel.c_str());
                     }
                     drawList->PopClipRect();
+
+                    // Solid strips inside pixel-aligned bounds keep every side
+                    // equally thick, without stroke joins or subpixel smoothing.
+                    const float borderWidth = selected ? 2.0f : 1.0f;
+                    const ImU32 borderColour = selected ? palette.selectedClipBorder : palette.clipBorder;
+                    drawList->AddRectFilled(clipMinimum,
+                                           ImVec2(clipMaximum.x, clipMinimum.y + borderWidth), borderColour);
+                    drawList->AddRectFilled(ImVec2(clipMinimum.x, clipMaximum.y - borderWidth),
+                                           clipMaximum, borderColour);
+                    drawList->AddRectFilled(ImVec2(clipMinimum.x, clipMinimum.y + borderWidth),
+                                           ImVec2(clipMinimum.x + borderWidth, clipMaximum.y - borderWidth), borderColour);
+                    drawList->AddRectFilled(ImVec2(clipMaximum.x - borderWidth, clipMinimum.y + borderWidth),
+                                           ImVec2(clipMaximum.x, clipMaximum.y - borderWidth), borderColour);
                 }
             }
 

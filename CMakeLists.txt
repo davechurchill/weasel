@@ -231,6 +231,14 @@ if(WEASEL_BUILD_FFMPEG_SMOKE_TEST)
     endif()
     add_test(NAME WeaselFfmpegSmoke COMMAND WeaselFfmpegSmoke)
 
+    add_executable(WeaselTimelineSelectionTests
+        tests/TimelineSelectionRegression.cpp
+        src/project/ProjectData.cpp
+        src/timeline/TimelineController.cpp
+    )
+    target_include_directories(WeaselTimelineSelectionTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_test(NAME WeaselTimelineSelectionTests COMMAND WeaselTimelineSelectionTests)
+
     add_executable(WeaselFfmpegBenchmark
         tests/FfmpegRenderBenchmark.cpp
         src/media/FfmpegBackend.cpp

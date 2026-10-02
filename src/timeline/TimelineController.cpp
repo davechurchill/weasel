@@ -57,6 +57,25 @@ namespace weasel
         return m_selection.clipIds;
     }
 
+    std::vector<int> TimelineController::selectedClipGroupIds() const
+    {
+        std::vector<int> groupIds;
+        std::unordered_set<int> coveredIds;
+        for (const int clipId : validSelectedClipIds())
+        {
+            if (coveredIds.insert(clipId).second)
+            {
+                groupIds.push_back(clipId);
+                const int linkedClipId = linkedClipIdForSelection(clipId);
+                if (linkedClipId > 0)
+                {
+                    coveredIds.insert(linkedClipId);
+                }
+            }
+        }
+        return groupIds;
+    }
+
     bool TimelineController::isClipSelected(int clipId) const
     {
         return std::find(m_selection.clipIds.begin(), m_selection.clipIds.end(), clipId)
@@ -84,6 +103,14 @@ namespace weasel
         return validAssetIds;
     }
 
+    int TimelineController::linkedClipIdForSelection(int clipId) const
+    {
+        const TimelineClip* clip = m_project.findClip(clipId);
+        const TimelineClip* linkedClip = clip && clip->linkedClipId > 0 && clip->linkedClipId != clipId
+            ? m_project.findClip(clip->linkedClipId) : nullptr;
+        return linkedClip && linkedClip->linkedClipId == clipId ? linkedClip->id : -1;
+    }
+
     std::vector<int> TimelineController::collectValidClipIds(const std::vector<int>& clipIds) const
     {
         std::vector<int> validClipIds;
@@ -101,6 +128,7 @@ namespace weasel
         for (const int clipId : clipIds)
         {
             appendIfValid(clipId);
+            appendIfValid(linkedClipIdForSelection(clipId));
         }
         return validClipIds;
     }
@@ -294,7 +322,11 @@ namespace weasel
             return true;
         }
 
-        clipIds.erase(selected);
+        const int linkedClipId = linkedClipIdForSelection(clipId);
+        clipIds.erase(std::remove_if(clipIds.begin(), clipIds.end(), [clipId, linkedClipId](int selectedId)
+        {
+            return selectedId == clipId || selectedId == linkedClipId;
+        }), clipIds.end());
         setClipSelection(clipIds);
         return true;
     }

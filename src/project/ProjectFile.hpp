@@ -429,7 +429,7 @@ namespace weasel
 
             loaded.exportSettings().outputFileName = storedExport.at("outputFileName").get<std::string>();
             loaded.exportSettings().renderer = static_cast<ExportRenderer>(storedExport.value(
-                "renderer", static_cast<int>(ExportRenderer::Shader)));
+                "renderer", static_cast<int>(ExportRenderer::Ffmpeg)));
             loaded.exportSettings().codec = static_cast<ExportCodec>(storedExport.at("codec").get<int>());
             loaded.exportSettings().useGpuEncoding = storedExport.at("useGpuEncoding").get<bool>();
             loaded.exportSettings().rateControl = static_cast<ExportRateControl>(storedExport.at("rateControl").get<int>());

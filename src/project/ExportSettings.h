@@ -41,13 +41,13 @@ namespace weasel
     struct ExportSettings
     {
         std::string       outputFileName = "final_edit.mp4";
-        ExportRenderer    renderer = ExportRenderer::Shader;
+        ExportRenderer    renderer = ExportRenderer::Ffmpeg;
         ExportCodec       codec = ExportCodec::H264;
         bool              useGpuEncoding = true;
-        ExportRateControl rateControl = ExportRateControl::ConstantQuality;
+        ExportRateControl rateControl = ExportRateControl::TargetBitrate;
         ExportPreset      preset = ExportPreset::Medium;
         int               crf = 18;
-        int               videoBitrateKbps = 12000;
+        int               videoBitrateKbps = 4000;
         AudioCodec        audioCodec = AudioCodec::Aac;
         int               audioBitrateKbps = 192;
 
@@ -59,7 +59,7 @@ namespace weasel
         if (settings.renderer != ExportRenderer::Shader
             && settings.renderer != ExportRenderer::Ffmpeg)
         {
-            settings.renderer = ExportRenderer::Shader;
+            settings.renderer = ExportRenderer::Ffmpeg;
         }
         if (settings.codec != ExportCodec::H264 && settings.codec != ExportCodec::H265)
         {
@@ -72,7 +72,7 @@ namespace weasel
         if (settings.rateControl != ExportRateControl::ConstantQuality
             && settings.rateControl != ExportRateControl::TargetBitrate)
         {
-            settings.rateControl = ExportRateControl::ConstantQuality;
+            settings.rateControl = ExportRateControl::TargetBitrate;
         }
         if (settings.preset != ExportPreset::VeryFast && settings.preset != ExportPreset::Fast
             && settings.preset != ExportPreset::Medium && settings.preset != ExportPreset::Slow

@@ -50,6 +50,10 @@ namespace weasel
         static constexpr float DefaultLayerHeight = 58.0f;
 
         float        pixelsPerSecond = DefaultPixelsPerSecond;
+        // Time at the view's right edge after the last wheel zoom. The canvas
+        // extends at least this far so a zoom can keep the hovered time under
+        // the mouse even when the sequence is shorter than the view.
+        double       zoomViewEnd = 0.0;
         bool         fitToSequence = false;
         bool         snapToEdges = true;
         float        videoLayerHeight = DefaultLayerHeight;
@@ -73,6 +77,7 @@ namespace weasel
             waveformAlignmentMessage.clear();
             monitorPlayheadSliderActive = false;
             timeline.draggingPlayhead = false;
+            timeline.zoomViewEnd = 0.0;
         }
     };
 

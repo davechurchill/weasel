@@ -434,6 +434,7 @@ namespace weasel
             presentation.pixelsPerSecond = std::clamp(timelineViewportWidth / static_cast<float>(sequenceDuration),
                                                        minimumPixelsPerSecond,
                                                        MaximumTimelinePixelsPerSecond);
+            presentation.zoomViewEnd = 0.0;
         }
         else
         {
@@ -441,9 +442,15 @@ namespace weasel
         }
         const double timelineEnd = sequenceDuration > 0.0 ? sequenceDuration : 12.0;
         const float requiredTimelineWidth = TimelineLabelWidth + static_cast<float>(timelineEnd) * presentation.pixelsPerSecond + TimelineEndPadding;
+        const float zoomViewWidth = TimelineLabelWidth + static_cast<float>(presentation.zoomViewEnd) * presentation.pixelsPerSecond;
+        const float canvasWidth = std::max(available.x, std::max(requiredTimelineWidth, zoomViewWidth));
         const ImGuiWindowFlags timelineCanvasFlags = ImGuiWindowFlags_NoScrollWithMouse
-            | (requiredTimelineWidth > available.x ? ImGuiWindowFlags_HorizontalScrollbar : 0);
+            | (canvasWidth > available.x ? ImGuiWindowFlags_HorizontalScrollbar : 0);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, TimelineScrollbarSize);
+        // ImGui clamps a pending SetScrollX against the content width when the
+        // child begins. Declare the current zoom's width up front, otherwise the
+        // previous frame's (pre-zoom) width clamps the wheel zoom's anchor scroll.
+        ImGui::SetNextWindowContentSize(ImVec2(canvasWidth, 0.0f));
         if (ImGui::BeginChild("TimelineCanvas", available, ImGuiChildFlags_Borders, timelineCanvasFlags))
         {
             if (presentation.fitToSequence && sequenceDuration > 0.0)
@@ -452,7 +459,6 @@ namespace weasel
                 presentation.fitToSequence = false;
             }
             const double projectEnd = timelineEnd;
-            const float canvasWidth = std::max(available.x, requiredTimelineWidth);
             const float trackRowsHeight = TimelineRowsHeight(project.sequence(), layerHeights);
             const float canvasHeight = TimelineRulerHeight + trackRowsHeight;
             const ImVec2 canvasPosition = ImGui::GetCursorScreenPos();
@@ -939,7 +945,14 @@ namespace weasel
                                                            minimumPixelsPerSecond,
                                                            MaximumTimelinePixelsPerSecond);
                 const float scrollDelta = static_cast<float>(mouseTime * (presentation.pixelsPerSecond - previousPixelsPerSecond));
-                ImGui::SetScrollX(std::max(0.0f, ImGui::GetScrollX() + scrollDelta));
+                const float previousScrollX = ImGui::GetScrollX();
+                const float scrollX = std::max(0.0f, previousScrollX + scrollDelta);
+                ImGui::SetScrollX(scrollX);
+
+                // Without this, a sequence shorter than the view leaves nothing to
+                // scroll into, pinning 0:00 to the left edge until the zoom fills it.
+                const float viewRightX = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() + (scrollX - previousScrollX);
+                presentation.zoomViewEnd = static_cast<double>((viewRightX - originX) / presentation.pixelsPerSecond);
             }
 
             if (ImGui::BeginDragDropTarget())
